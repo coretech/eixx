@@ -44,10 +44,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 namespace EIXX_NAMESPACE {
 namespace marshal {
 
-template <typename Alloc> class eterm;
+template <typename Alloc> struct eterm;
 
 template <typename Alloc>
-class tuple {
+struct tuple {
     blob<eterm<Alloc>, Alloc>* m_blob;
 
     // We store tuple's effective size in last element. The size is value+1, so 

@@ -49,7 +49,7 @@ namespace marshal {
  * it will not be bound.
  **/
 template <class Alloc>
-class var : protected string<Alloc>
+struct var : protected string<Alloc>
 {
     typedef string<Alloc> base_t;
 public:

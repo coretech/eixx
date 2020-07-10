@@ -127,7 +127,7 @@ namespace {
  * </code>
  */
 template <typename Alloc>
-class eterm {
+struct eterm {
     eterm_type m_type;
 
     union vartype {

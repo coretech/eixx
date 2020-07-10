@@ -48,7 +48,7 @@ struct cons {
 };
 
 template <typename Alloc>
-class list : protected alloc_base<cons<Alloc>, Alloc> {
+struct list : protected alloc_base<cons<Alloc>, Alloc> {
 public:
     typedef cons<Alloc> cons_t;
 private:
