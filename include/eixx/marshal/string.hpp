@@ -72,7 +72,9 @@ public:
         memcpy(m_blob->data(), s, m_blob->size()-1);
         m_blob->data()[m_blob->size()-1] = '\0';
     }
-    string(const std::string& s, const Alloc& a = Alloc()) {
+    template<typename T>
+    string(const std::basic_string<char, std::char_traits<char>, T>& s,
+            const Alloc& a = Alloc()) {
         if (s.empty()) {
             m_blob = NULL;
             return;
