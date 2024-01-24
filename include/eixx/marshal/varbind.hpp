@@ -52,9 +52,8 @@ class varbind {
         std::ostream& out, const varbind<AllocT>& binding);
 
 protected:
-    typedef std::map<
-        string<Alloc>, eterm<Alloc>, std::less< string<Alloc> >, Alloc
-    > eterm_map_t;
+    using eterm_map_t = std::map<string<Alloc>, eterm<Alloc>, std::less<string<Alloc>>,
+        typename std::allocator_traits<Alloc>::template rebind_alloc<std::pair<const string<Alloc>, eterm<Alloc>>>>;
 
 public:
     explicit varbind(const Alloc& a_alloc = Alloc())
@@ -96,12 +95,12 @@ public:
     }
 
     const eterm<Alloc>*
-    operator[] (const char* a_var_name) const throw(err_unbound_variable) {
+    operator[] (const char* a_var_name) const {
         return (*this)[string<Alloc>(a_var_name)];
     }
 
     const eterm<Alloc>*
-    operator[] (const string<Alloc>& a_var_name) const throw(err_unbound_variable) {
+    operator[] (const string<Alloc>& a_var_name) const {
         const eterm<Alloc>* p = find(a_var_name);
         if (!p) throw err_unbound_variable(a_var_name.c_str());
         return p;

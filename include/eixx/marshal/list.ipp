@@ -80,8 +80,7 @@ void list<Alloc>::init(const eterm<Alloc> items[], size_t N, const Alloc& alloc)
 }
 
 template <class Alloc>
-list<Alloc>::list(const cons_t* a_head, int a_len, const Alloc& alloc)
-    throw (err_bad_argument) : base_t(alloc)
+list<Alloc>::list(const cons_t* a_head, int a_len, const Alloc& alloc) : base_t(alloc)
 {
     unsigned int alloc_size;
 
@@ -114,8 +113,7 @@ list<Alloc>::list(const cons_t* a_head, int a_len, const Alloc& alloc)
 }
 
 template <class Alloc>
-list<Alloc>::list(const char *buf, int& idx, size_t size, const Alloc& a_alloc)
-    throw(err_decode_exception) : base_t(a_alloc) 
+list<Alloc>::list(const char *buf, int& idx, size_t size, const Alloc& a_alloc) : base_t(a_alloc) 
 {
     int arity;
     if (ei_decode_list_header(buf, &idx, &arity) < 0)
@@ -168,7 +166,7 @@ void list<Alloc>::encode(char* buf, int& idx, size_t size) const
 }
 
 template <class Alloc>
-list<Alloc> list<Alloc>::tail(size_t idx) const throw(err_bad_argument)
+list<Alloc> list<Alloc>::tail(size_t idx) const
 {
     const header_t* l_header = header();
     const cons_t* p = l_header->head;
@@ -211,7 +209,6 @@ void list<Alloc>::push_back(const eterm<Alloc>& a)
 
 template <class Alloc>
 bool list<Alloc>::subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const
-    throw (err_unbound_variable)
 {
     // We check if any contained term changes.
     bool changed = false;
@@ -245,7 +242,6 @@ bool list<Alloc>::subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const
 
 template <class Alloc>
 bool list<Alloc>::match(const eterm<Alloc>& pattern, varbind<Alloc>* binding) const
-    throw (err_invalid_term, err_unbound_variable)
 {
     switch (pattern.type()) {
         case VAR:  return pattern.match(eterm<Alloc>(*this), binding);

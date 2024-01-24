@@ -66,7 +66,7 @@ class ref {
 
     // Must only be called from constructor!
     void init(const atom& node, uint32_t* ids, int creation, 
-              const Alloc& alloc) throw(err_bad_argument) 
+              const Alloc& alloc) 
     {
         m_blob = new blob<ref_blob, Alloc>(1, alloc);
         new (m_blob->data()) ref_blob(node, ids, creation);
@@ -92,7 +92,7 @@ public:
      */
     template <int N>
     ref(const char* node, uint32_t (&ids)[N], unsigned int creation, 
-        const Alloc& a_alloc = Alloc()) throw(err_bad_argument)
+        const Alloc& a_alloc = Alloc()) 
     {
         BOOST_STATIC_ASSERT(N == 3);
         int len = strlen(node);
@@ -103,14 +103,14 @@ public:
 
     template <int N>
     ref(const atom& node, uint32_t (&ids)[N], unsigned int creation, 
-        const Alloc& a_alloc = Alloc()) throw(err_bad_argument)
+        const Alloc& a_alloc = Alloc())
     {
         detail::check_node_length(node.size());
         init(node, ids, creation, a_alloc);
     }
 
     ref(const atom& node, uint32_t id1, uint32_t id2, uint32_t id3, unsigned int creation, 
-        const Alloc& a_alloc = Alloc()) throw(err_bad_argument)
+        const Alloc& a_alloc = Alloc())
     {
         detail::check_node_length(node.size());
         uint32_t ids[] = { id1, id2, id3 };
@@ -125,8 +125,7 @@ public:
      * @param size is the size of the \a buf buffer.
      * @param a_alloc is the allocator to use.
      */
-    ref(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc())
-        throw(err_decode_exception);
+    ref(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc());
 
     ref(const ref& rhs) : m_blob(rhs.m_blob) { m_blob->inc_rc(); }
 

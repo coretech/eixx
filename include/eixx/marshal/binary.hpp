@@ -49,7 +49,7 @@ class binary
 {
     blob<char, Alloc>* m_blob;
 
-    void decode(const char* buf, int& idx, size_t size) throw(err_decode_exception);
+    void decode(const char* buf, int& idx, size_t size);
 
     binary() {}
 public:
@@ -77,8 +77,7 @@ public:
      * @param idx is the current offset in the buf buffer.
      * @param size is the size of \a buf buffer.
      */
-    binary(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc())
-        throw(err_decode_exception);
+    binary(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc());
 
     /** Get the size of the data (in bytes) */
     size_t size() const { return m_blob->size(); }

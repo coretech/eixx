@@ -162,8 +162,7 @@ class eterm {
     /**
      * Decode a term from the Erlang external binary format.
      */
-    void decode(const char* a_buf, int& idx, size_t a_size, const Alloc& a_alloc)
-        throw (err_decode_exception);
+    void decode(const char* a_buf, int& idx, size_t a_size, const Alloc& a_alloc);
 
     long&           get(long*)                  { check(LONG);   return vt.i; }
     double&         get(double*)                { check(DOUBLE); return vt.d; }
@@ -217,8 +216,7 @@ public:
      * @param a_size is the total size of the term stored in \a a_buf buffer.
      * @param a_alloc is the custom allocator.
      */
-    eterm(const char* a_buf, size_t a_size, const Alloc& a_alloc = Alloc())
-        throw(err_decode_exception);
+    eterm(const char* a_buf, size_t a_size, const Alloc& a_alloc = Alloc());
 
     /**
      * Construct a term by decoding it from an \a idx offset of the
@@ -230,7 +228,7 @@ public:
      * @param a_alloc is the custom allocator.
      */
     eterm(const char* a_buf, int& idx, size_t a_size, const Alloc& a_alloc = Alloc())
-        throw(err_decode_exception) {
+        {
         decode(a_buf, idx, a_size, a_alloc);
     }
 
@@ -383,8 +381,7 @@ public:
      * @return true if matching succeeded or false if failed.
      */
     bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding = NULL,
-               const Alloc& a_alloc = Alloc()) const
-        throw (err_unbound_variable);
+               const Alloc& a_alloc = Alloc()) const;
 
     /**
      * Returns the equivalent without inner variables, using the
@@ -402,8 +399,7 @@ public:
      * @throws err_invalid_term if the term is invalid
      * @throws err_unbound_variable if a variable is unbound
      */
-    bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const
-        throw (err_invalid_term, err_unbound_variable);
+    bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const;
 
     /**
      * This method finds the first unbound variable in a term for
@@ -445,8 +441,7 @@ public:
      *        needs to be encoded in the beginning of the buffer.
      */
     void encode(char* buf, size_t size,
-        size_t a_header_size = DEF_HEADER_SIZE, bool a_with_version = true) const
-        throw (err_encode_exception);
+        size_t a_header_size = DEF_HEADER_SIZE, bool a_with_version = true) const;
 
     /**
      * Create an eterm from an string representation. Like sprintf()
@@ -473,10 +468,8 @@ public:
      * @return compiled eterm
      * @throws err_format_exception
      */
-    static eterm<Alloc> format(const Alloc& a_alloc, const char* fmt, ...)
-        throw (err_format_exception);
-    static eterm<Alloc> format(const char* fmt, ...)
-        throw (err_format_exception);
+    static eterm<Alloc> format(const Alloc& a_alloc, const char* fmt, ...);
+    static eterm<Alloc> format(const char* fmt, ...);
 
     /// Cast a value to eterm. If t is of eterm type, it is returned as is.
     template <typename T>

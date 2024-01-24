@@ -101,7 +101,6 @@ std::string eterm<Alloc>::to_string(size_t a_size_limit, const varbind<Alloc>* b
 
 template <class Alloc>
 eterm<Alloc>::eterm(const char* a_buf, size_t a_size, const Alloc& a_alloc)
-    throw(err_decode_exception)
 {
     int idx = 0;
     int vsn;
@@ -112,7 +111,6 @@ eterm<Alloc>::eterm(const char* a_buf, size_t a_size, const Alloc& a_alloc)
 
 template <class Alloc>
 void eterm<Alloc>::decode(const char* a_buf, int& idx, size_t a_size, const Alloc& a_alloc)
-    throw(err_decode_exception)
 {
     if ((size_t)idx == a_size)
         throw err_decode_exception("Empty term", idx);
@@ -212,7 +210,7 @@ string<Alloc> eterm<Alloc>::encode(size_t a_header_size, bool a_with_version) co
 
 template <typename Alloc>
 void eterm<Alloc>::encode(char* a_buf, size_t size, 
-    size_t a_header_size, bool a_with_version) const throw (err_encode_exception)
+    size_t a_header_size, bool a_with_version) const
 {
     #if BOOST_VERSION >= 104900
     namespace bd = boost::spirit::detail;
@@ -253,7 +251,6 @@ bool eterm<Alloc>::match(
     const eterm<Alloc>& pattern,
     varbind<Alloc>* binding,
     const Alloc& a_alloc) const
-    throw (err_unbound_variable)
 {
     // Protect the given binding. Change it only if the match succeeds.
     varbind<Alloc> dirty(a_alloc);
@@ -273,14 +270,13 @@ bool eterm<Alloc>::match(
 
 template <typename Alloc>
 bool eterm<Alloc>::subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const
-    throw (err_invalid_term, err_unbound_variable) {
+{
     visit_eterm_subst<Alloc> visitor(out, binding);
     return visitor.apply_visitor(*this);
 }
 
 template <class Alloc>
 eterm<Alloc> eterm<Alloc>::format(const Alloc& a_alloc, const char* fmt, ...)
-    throw (err_format_exception)
 {
     const char** l_fmt = &fmt;
     va_list ap;
@@ -299,7 +295,6 @@ eterm<Alloc> eterm<Alloc>::format(const Alloc& a_alloc, const char* fmt, ...)
 
 template <class Alloc>
 eterm<Alloc> eterm<Alloc>::format(const char* fmt, ...)
-    throw (err_format_exception)
 {
     const char** l_fmt = &fmt;
     va_list ap;

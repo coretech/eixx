@@ -132,8 +132,7 @@ public:
         if (m_blob) m_blob->inc_rc();
     } 
 
-    explicit list(const cons_t* a_head, int a_len = -1, const Alloc& alloc = Alloc())
-        throw (err_bad_argument);
+    explicit list(const cons_t* a_head, int a_len = -1, const Alloc& alloc = Alloc());
 
     template <int N>
     list(const eterm<Alloc> (&items)[N], const Alloc& alloc = Alloc());
@@ -143,8 +142,7 @@ public:
     /**
      * Decode the list from a binary buffer.
      */
-    explicit list(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc())
-        throw(err_decode_exception);
+    explicit list(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc());
 
     ~list() {
         release();
@@ -175,7 +173,7 @@ public:
 
     /// Return pointer to the N'th element in the list. This method has
     /// O(N) complexity.
-    const eterm<Alloc>& nth(size_t n) const throw(err_bad_argument) {
+    const eterm<Alloc>& nth(size_t n) const {
         if (n > length())
             throw err_bad_argument("Index out of bounds", n);
         const_iterator it = begin(), endit = end();
@@ -184,7 +182,7 @@ public:
         return *it;
     }
 
-    list<Alloc> tail(size_t idx) const throw(err_bad_argument);
+    list<Alloc> tail(size_t idx) const;
 
     bool operator== (const list<Alloc>& rhs) const {
         const_iterator it1  = begin(), it2  = rhs.begin(),
@@ -211,11 +209,9 @@ public:
 
     void encode(char* buf, int& idx, size_t size) const;
 
-    bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const
-        throw (err_unbound_variable);
+    bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const;
 
-    bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding) const
-        throw (err_invalid_term, err_unbound_variable);
+    bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding) const;
     
     std::ostream& dump(std::ostream& out, const varbind<Alloc>* vars = NULL) const;
 

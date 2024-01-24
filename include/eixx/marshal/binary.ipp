@@ -39,7 +39,6 @@ namespace marshal {
 
 template <class Alloc>
 binary<Alloc>::binary(const char* buf, int& idx, size_t size, const Alloc& a_alloc)
-    throw (err_decode_exception)
 {
     const char* s  = buf + idx;
     const char* s0 = s;

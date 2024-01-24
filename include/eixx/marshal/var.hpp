@@ -82,7 +82,7 @@ public:
     }
 
     bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const
-        throw (err_unbound_variable) {
+    {
         if (is_any()) throw err_unbound_variable(c_str());
         const eterm<Alloc>* term = binding ? binding->find(c_str()) : NULL;
         if (!term) throw err_unbound_variable(c_str());
@@ -91,7 +91,7 @@ public:
     }
 
     bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding) const
-        throw (err_unbound_variable) {
+    {
         if (is_any()) return true;
         const eterm<Alloc>* value = binding ? binding->find(c_str()) : NULL;
         if (value)

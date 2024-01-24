@@ -82,7 +82,6 @@ public:
 
     /// Decode the pid from a binary buffer.
     trace(const char* buf, int& idx, size_t a_size, const Alloc& a_alloc = Alloc())
-        throw (err_decode_exception)
         : tuple<Alloc>(buf, idx, a_size, a_alloc)
     {
         if (size() != 5 || (*this)[0].type() != LONG

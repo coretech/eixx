@@ -53,8 +53,7 @@ namespace marshal {
 
 // Forward declaration
 template <class Alloc>
-static eterm<Alloc> eformat(const char** fmt, va_list* args, const Alloc& a_alloc = Alloc())
-    throw(err_format_exception);
+static eterm<Alloc> eformat(const char** fmt, va_list* args, const Alloc& a_alloc = Alloc());
 
 } // namespace marshal
 } // namespace EIXX_NAMESPACE

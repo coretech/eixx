@@ -187,7 +187,6 @@ namespace detail {
         size_t lookup(const char* a_atom, size_t n) { return lookup(std::string(a_atom, n)); }
         size_t lookup(const char* a_atom)           { return lookup(std::string(a_atom)); }
         size_t lookup(const std::string& a_atom)
-            throw(std::runtime_error, err_bad_argument)
         {
             if (a_atom.size() == 0)
                 return 0;
@@ -245,42 +244,36 @@ public:
     /// @throws std::runtime_error if atom table is full.
     /// @throws err_bad_argument if atom size is longer than MAXATOMLEN
     atom(const char* s)
-        throw(std::runtime_error, err_bad_argument)
         : m_index(atom_table().lookup(string_t(s))) {}
 
     /// @copydoc atom::atom
     template <int N>
     atom(const char (&s)[N])
-        throw(std::runtime_error, err_bad_argument)
         : m_index(atom_table().lookup(string_t(s, N))) {}
 
     /// @copydoc atom::atom
     explicit atom(const std::string& s)
-        throw(std::runtime_error)
         : m_index(atom_table().lookup(s))
     {}
 
     /// @copydoc atom::atom
     template<typename Alloc>
     explicit atom(const string<Alloc>& s)
-        throw(std::runtime_error)
         : m_index(atom_table().lookup(string_t(s.c_str(), s.size())))
     {}
 
     /// @copydoc atom::atom
     atom(const char* s, size_t n)
-        throw(std::runtime_error)
         : m_index(atom_table().lookup(string_t(s, n)))
     {}
 
     /// Copy atom from another atom.  This is a constant time 
     /// SMP safe operation.
-    atom(const atom& s) throw() : m_index(s.m_index) {}
+    atom(const atom& s) : m_index(s.m_index) {}
 
     /// Decode an atom from a binary buffer encoded in 
     /// Erlang external binary format.
     atom(const char* a_buf, int& idx, size_t a_size)
-        throw (err_decode_exception, std::runtime_error)
     {
         const char *s = a_buf + idx;
         const char *s0 = s;
@@ -355,7 +348,6 @@ public:
 /// @throws std::runtime_error if atom table is full.
 /// @throws err_bad_argument if atom size is longer than MAXNODELEN
 inline atom make_node_name(const std::string& s)
-    throw(std::runtime_error, err_bad_argument)
 {
     if (!s.find('@')) throw err_bad_argument("Invalid node name", s);
     detail::check_node_length(s.size());

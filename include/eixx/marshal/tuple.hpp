@@ -79,7 +79,14 @@ public:
     explicit tuple(size_t arity, const Alloc& alloc = Alloc())
         : m_blob(new blob<eterm<Alloc>, Alloc>(arity+1, alloc))
     {
+	 #ifndef __clang__
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wclass-memaccess"
+        #endif
         memset(m_blob->data(), 0, sizeof(eterm<Alloc>)*m_blob->size());
+	#ifndef __clang__
+        #pragma GCC diagnostic pop
+        #endif
         set_init_size(0);
     }
 
@@ -104,8 +111,7 @@ public:
     /**
      * Decode the tuple from a binary buffer.
      */
-    tuple(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc())
-        throw(err_decode_exception);
+    tuple(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc());
 
     ~tuple() {
         if (m_blob && m_blob->release(false)) {
@@ -148,7 +154,7 @@ public:
     }
 
     template <typename T>
-    void push_back(const T& t) throw (err_invalid_term) {
+    void push_back(const T& t) {
         BOOST_ASSERT(m_blob);
         if (initialized())
             throw err_invalid_term("Attempt to change immutable tuple!");
@@ -176,11 +182,9 @@ public:
 
     void encode(char* buf, int& idx, size_t size) const;
 
-    bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const
-        throw (err_unbound_variable);
+    bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const;
 
-    bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding) const
-        throw (err_invalid_term, err_unbound_variable);
+    bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding) const;
     
     std::ostream& dump(std::ostream& out, const varbind<Alloc>* vars = NULL) const;
 

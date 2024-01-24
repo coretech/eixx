@@ -87,7 +87,7 @@ class epid {
 
     // Must only be called from constructor!
     void init(const atom& node, uint16_t id, uint16_t serial, uint8_t creation, 
-              const Alloc& alloc) throw(err_bad_argument) 
+              const Alloc& alloc) 
     {
         m_blob = new blob<pid_blob, Alloc>(1, alloc);
         new (m_blob->data()) pid_blob(node, id, serial, creation);
@@ -97,8 +97,7 @@ class epid {
         #endif
     }
 
-    void decode(const char* buf, int& idx, size_t size, const Alloc& a_alloc)
-        throw (err_decode_exception, err_bad_argument);
+    void decode(const char* buf, int& idx, size_t size, const Alloc& a_alloc);
 
     epid() {}
 
@@ -107,9 +106,6 @@ public:
     /**
      * Create an Erlang pid from its components using provided allocator.
      * @param node the nodename.
-     * @param id an arbitrary number. Only the low order 15 bits will
-     * be used.
-     * @param serial another arbitrary number. Only the low order 13 bits
      * will be used.
      * @param creation yet another arbitrary number. Only the low order
      * 2 bits will be used.
@@ -117,7 +113,6 @@ public:
      * @throw err_bad_argument if node is empty or greater than MAX_NODE_LENGTH
      **/
     epid(const char* node, int id, int serial, int creation, const Alloc& a_alloc = Alloc()) 
-        throw(err_bad_argument) 
     {
         int len = strlen(node);
         detail::check_node_length(len);
@@ -126,7 +121,6 @@ public:
     }
 
     epid(const atom& node, int id, int serial, int creation, const Alloc& a_alloc = Alloc())
-        throw(err_bad_argument) 
     {
         detail::check_node_length(node.size());
         init(node, id, serial, creation, a_alloc);
@@ -134,7 +128,7 @@ public:
 
     /// Decode the pid from a binary buffer.
     epid(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc())
-        throw (err_decode_exception, err_bad_argument) {
+    {
         decode(buf, idx, size, a_alloc);
     }
 
@@ -215,12 +209,16 @@ public:
 namespace std {
     template <typename Alloc>
     ostream& operator<< (ostream& out, const EIXX_NAMESPACE::marshal::epid<Alloc>& a) {
-        return a.dump(out);
-    }
-
+   }
 } // namespace std
-
 #include <eixx/marshal/pid.ipp>
 
 #endif // _IMPL_PID_HPP_
 
+//----------------------------------------------------------------------------
+/// \file  pid.hpp
+//----------------------------------------------------------------------------
+//----------------------------------------------------------------------------
+/// \file  pid.hpp
+//----------------------------------------------------------------------------
+/// \file  pid.hpp

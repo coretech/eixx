@@ -55,9 +55,12 @@ namespace EIXX_NAMESPACE {
 namespace marshal {
 
     template <typename Alloc>
-    struct vector : public std::vector<eterm<Alloc>, Alloc> {
+    struct vector : public std::vector<eterm<Alloc>, typename std::allocator_traits<Alloc>::template rebind_alloc<eterm<Alloc>>> 
+    {
+	using VecAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<eterm<Alloc>>;
+	using base = std::vector<eterm<Alloc>, VecAlloc>;
         explicit vector(const Alloc& a_alloc = Alloc())
-            : std::vector<eterm<Alloc>, Alloc> (a_alloc)
+            : base(a_alloc)
         {}
     };
 
@@ -353,7 +356,6 @@ namespace marshal {
 
     template <class Alloc>
     static eterm<Alloc> eformat(const char** fmt, va_list* pap, const Alloc& a_alloc)
-        throw (err_format_exception)
     {
         vector<Alloc> v(a_alloc);
         Alloc alloc(a_alloc);

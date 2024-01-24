@@ -72,9 +72,7 @@ public:
         memcpy(m_blob->data(), s, m_blob->size()-1);
         m_blob->data()[m_blob->size()-1] = '\0';
     }
-    template<typename T>
-    string(const std::basic_string<char, std::char_traits<char>, T>& s,
-            const Alloc& a = Alloc()) {
+    string(const std::string& s, const Alloc& a = Alloc()) {
         if (s.empty()) {
             m_blob = NULL;
             return;
@@ -99,8 +97,7 @@ public:
         if (m_blob) m_blob->inc_rc();
     }
 
-    string(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc())
-        throw(err_decode_exception);
+    string(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc());
 
     ~string() {
         release();
@@ -180,7 +177,6 @@ static std::string to_binary_string(const string<Alloc>& a) {
 
 template <class Alloc>
 string<Alloc>::string(const char* buf, int& idx, size_t size, const Alloc& a_alloc)
-    throw(err_decode_exception)
 {
     const char *s = buf + idx;
     const char *s0 = s;
