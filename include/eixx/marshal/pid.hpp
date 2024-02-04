@@ -209,7 +209,8 @@ public:
 namespace std {
     template <typename Alloc>
     ostream& operator<< (ostream& out, const EIXX_NAMESPACE::marshal::epid<Alloc>& a) {
-   }
+     return a.dump(out);
+    }
 } // namespace std
 #include <eixx/marshal/pid.ipp>
 
