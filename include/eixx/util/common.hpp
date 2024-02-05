@@ -1,7 +1,7 @@
 //----------------------------------------------------------------------------
 /// \file common.hpp
 //----------------------------------------------------------------------------
-/// \namespace dmf Distributed Monitoring Framework.
+/// \namespace eixx EI C++ Interface Library
 ///
 /// This file contains a set of commonly used functions.
 //----------------------------------------------------------------------------
@@ -18,17 +18,20 @@
 #include <boost/interprocess/detail/atomic.hpp>
 #include <boost/version.hpp>
 #include <boost/static_assert.hpp>
+#include <boost/assert.hpp>
+#include <eixx/util/compiler_hints.hpp>
+
 #ifdef HAVE_CONFIG_H
-# include <config.h>
+#include <eixx/config.h>
 #endif
 
 #define ERL_MONITOR_P       19
 #define ERL_DEMONITOR_P     20
 #define ERL_MONITOR_P_EXIT  21
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 
-#if BOOST_VERSION > 104800
+#if BOOST_VERSION >= 104800
 namespace bid = boost::interprocess::ipcdetail;
 #else
 namespace bid = boost::interprocess::detail;
@@ -47,7 +50,7 @@ namespace bid = boost::interprocess::detail;
 /// \def ON_ERROR_CALLBACK(Client, S) 
 /// Invokes an error callback from within perc_client's implementation.
 ///
-/// @param Client is of type 'dmf::client'
+/// @param Connection is of type 'eixx::connection'
 /// @param S      is the stream of elements to include in the message.
 ///               The elements can be concatinated with left shift
 ///               notation.
@@ -71,16 +74,10 @@ int __inline__ log2(unsigned long n, uint8_t base = 2) {
     return n == 1 ? 0 : 1+log2(n/base, base); 
 }
 
-static __inline__ unsigned long bit_scan_forward(unsigned long v)
-{   
-    unsigned long r;
-    __asm__ __volatile__(
-        #if (__SIZEOF_LONG__ == 8)
-            "bsfq %1, %0": "=r"(r): "rm"(v) );
-        #else
-            "bsfl %1, %0": "=r"(r): "rm"(v) );
-        #endif
-    return r;
+/// Note, that bit_scan_forward(0) leads to UB
+static __inline__ int bit_scan_forward(unsigned long v)
+{
+    return __builtin_ctzl(v);
 }
 
 /// Wrapper for basic atomic operations over an integer.
@@ -108,7 +105,7 @@ private:
 
 /// Return the index of a_string in the a_list using a_default index if 
 /// a_string is not found in the list.
-template <int N>
+template <size_t N>
 int find_index(const char* (&a_list)[N], const char* a_string, int a_default=-1) {
     for (int i=0; i < N; i++)
         if (strcmp(a_string, a_list[i]) == 0)
@@ -116,7 +113,7 @@ int find_index(const char* (&a_list)[N], const char* a_string, int a_default=-1)
     return a_default;
 }
 
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 #endif // _EIXX_COMMON_HPP_
 

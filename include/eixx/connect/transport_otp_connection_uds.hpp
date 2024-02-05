@@ -12,23 +12,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (c) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -38,7 +34,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #include <eixx/connect/transport_otp_connection.hpp>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace connect {
 
 //----------------------------------------------------------------------------
@@ -63,8 +59,12 @@ public:
     boost::asio::local::stream_protocol::socket& socket() { return m_socket; }
 
     void start() {
+#if BOOST_VERSION >= 104700
+        m_socket.non_blocking(true);
+#else
         boost::asio::local::stream_protocol::socket::non_blocking_io nb(true);
         m_socket.io_control(nb);
+#endif
         base_t::start();
     }
 
@@ -74,28 +74,37 @@ public:
         return m_uds_filename;
     }
 
-    int native_socket() { return m_socket.native(); }
+    int native_socket() {
+#if BOOST_VERSION >= 104700
+        return m_socket.native_handle();
+#else
+        return m_socket.native();
+#endif
+    }
+
+    uint64_t remote_flags() const { return 0; }
 
 private:
     /// Socket for the connection.
     boost::asio::local::stream_protocol::socket m_socket;
     std::string m_uds_filename;
 
-    void connect(const std::string& a_this_node, 
-        const std::string& a_remote_node, const std::string& a_cookie)
-        throw(std::runtime_error)
+    /// @throws std::runtime_error
+    void connect(uint32_t a_this_creation, atom a_this_node, atom a_remote_nodename, atom a_cookie)
     {
-        base_t::connect(a_this_node, a_remote_node, a_cookie);
+        base_t::connect(a_this_creation, a_this_node, a_remote_nodename, a_cookie);
 
         boost::system::error_code err;
-        boost::asio::local::stream_protocol::endpoint endpoint(a_remote_node);
+        boost::asio::local::stream_protocol::endpoint endpoint(a_remote_nodename.to_string());
         m_socket.connect(endpoint, err);
         if (err)
             THROW_RUNTIME_ERROR("Error connecting to: " << m_uds_filename 
                 << ':' << err.message());
-        size_t n = a_remote_node.find_last_of('/');
-        this->m_remote_node = (n != std::string::npos) ? a_remote_node.substr(n+1) : a_remote_node;
-        m_uds_filename = a_remote_node;
+        auto s = a_remote_nodename.to_string();
+        auto n = s.find_last_of('/');
+        if (n != std::string::npos) s.erase(n);
+        this->m_remote_nodename = atom(s);
+        m_uds_filename = a_remote_nodename.to_string();
         this->start();
     }
 
@@ -106,6 +115,6 @@ private:
 //------------------------------------------------------------------------------
 
 } // namespace connect
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 #endif // _EIXX_TRANSPORT_OTP_CONNECTION_UDS_HPP_

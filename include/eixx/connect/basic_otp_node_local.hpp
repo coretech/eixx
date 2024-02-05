@@ -12,23 +12,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (c) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -40,7 +36,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/marshal/atom.hpp>
 #include <eixx/eterm_exception.hpp>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace connect {
 
 using marshal::atom;
@@ -52,29 +48,32 @@ using marshal::atom;
 class basic_otp_node_local {
 public:
     basic_otp_node_local() {}
-    basic_otp_node_local(const std::string& a_nodename, const std::string& a_cookie = "")
-        throw (std::runtime_error, err_bad_argument);
+
+    /// @throws std::runtime_error
+    /// @throws err_bad_argument
+    basic_otp_node_local(const std::string& a_nodename, const std::string& a_cookie = "");
 
     virtual ~basic_otp_node_local() {}
 
     /// Change the nodename of current node.
-    void set_nodename(const std::string& a_nodename, const std::string& a_cookie = "")
-        throw (std::runtime_error, err_bad_argument);
+    /// @throws std::runtime_error
+    /// @throws err_bad_argument
+    void set_nodename(const std::string& a_nodename, const std::string& a_cookie = "");
 
     /// Get node name in the form <tt>node@host</tt>.
-    const atom& nodename()  const { return m_nodename; }
+    atom                nodename()  const { return m_nodename; }
 
     /// Get node name in the form <tt>node@host.name.com</tt>.
-    const std::string& longname()  const { return m_longname; }
+    const std::string&  longname()  const { return m_longname; }
 
     /// Get name of the node without hostname
-    const std::string& alivename() const { return m_alivename; }
+    const std::string&  alivename() const { return m_alivename; }
 
     /// Get host name
-    const std::string& hostname()  const { return m_hostname; }
+    const std::string&  hostname()  const { return m_hostname; }
 
     /// Get cookie
-    const std::string& cookie()    const { return m_cookie; }
+    atom                cookie()    const { return m_cookie; }
 
     /// Set the cookie
     void cookie(const std::string& a_cookie) { m_cookie = a_cookie; }
@@ -87,13 +86,13 @@ protected:
     std::string m_longname;
     std::string m_alivename;
     std::string m_hostname;
-    std::string m_cookie;
+    atom        m_cookie;
 
-    static std::string s_default_cookie; // Default cookie
+    static atom        s_default_cookie; // Default cookie
     static std::string s_localhost;      // localhost name
 };
 
 } // namespace connect
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 #endif // _EIXX_OTP_NODE_LOCAL_HPP_

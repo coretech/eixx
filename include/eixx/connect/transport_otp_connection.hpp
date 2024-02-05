@@ -8,43 +8,88 @@
 //----------------------------------------------------------------------------
 /*
  * ***** BEGIN LICENSE BLOCK *****
- *
- * This file is part of the eixx (Erlang C++ Interface) library.
- *
- * Copyright (c) 2010 Serge Aleynikov <saleyn@gmail.com>
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- *
+
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
  * ***** END LICENSE BLOCK *****
  */
 
 #ifndef _EIXX_TRANSPORT_OTP_CONNECTION_HPP_
 #define _EIXX_TRANSPORT_OTP_CONNECTION_HPP_
 
+#include <memory>
 #include <boost/asio.hpp>
 #include <boost/bind.hpp>
 #include <boost/noncopyable.hpp>
 #include <boost/shared_ptr.hpp>
-#include <boost/enable_shared_from_this.hpp>
 #include <boost/algorithm/string.hpp>
 #include <eixx/util/common.hpp>
 #include <eixx/util/string_util.hpp>
 #include <eixx/connect/verbose.hpp>
 #include <eixx/marshal/string.hpp>
 
-namespace EIXX_NAMESPACE {
+#ifdef HAVE_EI_EPMD
+extern "C" {
+
+#include <epmd/ei_epmd.h>           // see erl_interface/src
+#include <misc/eiext.h>             // ERL_VERSION_MAGIC
+#include <connect/ei_connect_int.h> // see erl_interface/src
+
+}
+#else
+// These constants are not exposed by EI headers:
+// See: https://github.com/erlang/otp/blob/OTP-24.0.5/lib/erl_interface/src/connect/ei_connect_int.h
+#define ERL_VERSION_MAGIC            131
+#define EPMD_PORT                    4369
+#define EPMDBUF                      512
+#define EI_EPMD_PORT2_REQ            122
+#define EI_EPMD_PORT2_RESP           119
+#define EI_DIST_5                    5 /* OTP R4 - 22 */
+#define EI_DIST_6                    6 /* OTP 23 and later */
+#define EI_DIST_LOW                  EI_DIST_5
+#define EI_DIST_HIGH                 EI_DIST_6
+#define DFLAG_PUBLISHED              1
+#define DFLAG_ATOM_CACHE             2
+#define DFLAG_EXTENDED_REFERENCES    4
+#define DFLAG_DIST_MONITOR           8
+#define DFLAG_FUN_TAGS               0x10
+#define DFLAG_NEW_FUN_TAGS           0x80
+#define DFLAG_EXTENDED_PIDS_PORTS    0x100
+#define DFLAG_EXPORT_PTR_TAG         0x200
+#define DFLAG_BIT_BINARIES           0x400
+#define DFLAG_NEW_FLOATS             0x800
+#define DFLAG_SMALL_ATOM_TAGS        0x4000
+#define DFLAG_UTF8_ATOMS             0x10000
+#define DFLAG_MAP_TAG                0x20000
+#define DFLAG_BIG_CREATION           0x40000
+#define DFLAG_HANDSHAKE_23           0x1000000
+#define DFLAG_UNLINK_ID              0x2000000
+
+/*
+ * As the old handshake only support 32 flag bits, we reserve the remaining
+ * bits in the lower 32 for changes in the handshake protocol or potentially
+ * new capabilities that we also want to backport to OTP-22 or older.
+ */
+typedef EI_ULONGLONG DistFlags;
+#define DFLAG_RESERVED               0xfc000000
+#define DFLAG_NAME_ME                (((DistFlags)0x2) << 32)
+#define DFLAG_V4_NC                  (((DistFlags)0x4) << 32)
+
+#endif
+
+namespace eixx {
 namespace connect {
 
 namespace posix = boost::asio::posix;
@@ -54,6 +99,34 @@ enum connection_type { UNDEFINED, TCP, UDS };
 
 /// Convert connection type to string.
 const char* connection_type_to_str(connection_type a_type);
+
+//------------------------------------------------------------------------------
+// capability flags supported by this class
+//------------------------------------------------------------------------------
+// See: https://github.com/erlang/otp/blob/OTP-24.0.5/lib/erl_interface/src/connect/ei_connect.c#L2272-L2287
+inline constexpr uint64_t LOCAL_FLAGS = (
+                        DFLAG_EXTENDED_REFERENCES
+                        | DFLAG_DIST_MONITOR
+                        | DFLAG_EXTENDED_PIDS_PORTS
+                        | DFLAG_FUN_TAGS
+                        | DFLAG_NEW_FUN_TAGS
+                        | DFLAG_NEW_FLOATS
+                        | DFLAG_SMALL_ATOM_TAGS
+                        | DFLAG_UTF8_ATOMS
+                        | DFLAG_MAP_TAG
+                        | DFLAG_BIG_CREATION
+                        | DFLAG_EXPORT_PTR_TAG
+                        | DFLAG_BIT_BINARIES
+#ifdef DFLAG_HANDSHAKE_23
+                        | DFLAG_HANDSHAKE_23
+#endif
+#ifdef DFLAG_V4_NC
+                        | DFLAG_V4_NC
+#endif
+#ifdef DFLAG_UNLINK_ID
+                        // | DFLAG_UNLINK_ID
+#endif
+                        );
 
 //----------------------------------------------------------------------------
 // Base connection class.
@@ -76,9 +149,10 @@ protected:
     /// The handler used to process the incoming request.
     Handler*                    m_handler;
     connection_type             m_type;
-    std::string                 m_remote_node;
-    std::string                 m_this_node;
-    std::string                 m_cookie;
+    atom                        m_remote_nodename;
+    atom                        m_this_node;
+    uint32_t                    m_this_creation;
+    atom                        m_cookie;
 
     Alloc                       m_allocator;
 
@@ -133,7 +207,7 @@ protected:
     size_t available_queue()    const { return m_available_queue; }
 
     char*  rd_ptr()                 { return m_rd_ptr; }
-    size_t rd_length()              { return m_rd_end - m_rd_ptr; }
+    size_t rd_length()              { return static_cast<uintptr_t>(m_rd_end - m_rd_ptr); }
     size_t rd_capacity()            { return m_rd_buf.capacity() - rd_length(); }
     /// Verboseness
     verbose_type verbose()    const { return m_handler->verbose(); }
@@ -145,24 +219,36 @@ protected:
 
     void do_write_internal() {
         if (!m_is_writing && !m_out_msg_queue[available_queue()].empty()) {
+#if BOOST_VERSION >= 106600
+            std::deque<boost::asio::const_buffer> buffers = m_out_msg_queue[available_queue()];
+#else
             typedef boost::asio::detail::consuming_buffers<
                 boost::asio::const_buffer, 
                 std::deque<boost::asio::const_buffer> 
             > cb_t;
             cb_t buffers(m_out_msg_queue[available_queue()]);
+#endif            
             m_is_writing = true;
             flip_queues(); // Work on the data accumulated in the available_queue.
-            if (unlikely(verbose() >= VERBOSE_WIRE))
-                for(cb_t::const_iterator it=buffers.begin(); it != buffers.end(); ++it) {
+            if (unlikely(verbose() >= VERBOSE_WIRE)) {
+#if BOOST_VERSION >= 106600
+                auto begin = boost::asio::buffer_sequence_begin(buffers);
+                auto end = boost::asio::buffer_sequence_end(buffers);
+#else
+                auto begin = buffers.begin();
+                auto end = buffers.end();
+#endif
+                for(auto it=begin; it != end; ++it) {
                     std::stringstream s;
                     s << "  async_write " << boost::asio::buffer_size(*it) << " bytes: " 
                       << to_binary_string(boost::asio::buffer_cast<const char*>(*it),
                                           boost::asio::buffer_size(*it));
                     m_handler->report_status(REPORT_INFO, s.str());
                 }
+            }
+            auto pthis = this->shared_from_this();
             async_write(buffers, boost::asio::transfer_all(), 
-                boost::bind(&connection<Handler, Alloc>::handle_write, this->shared_from_this(),
-                    boost::asio::placeholders::error));
+                [pthis](auto& ec, std::size_t) { pthis->handle_write(ec); });
         }
     }
 
@@ -174,8 +260,8 @@ protected:
     /// Note: TICK message is represented by msg type = 0, in this case \a a_cntrl_msg
     /// and \a a_msg are invalid.
     /// @return Control Message
-    int transport_msg_decode(const char *mbuf, int len, transport_msg<Alloc>& a_tm)
-        throw(err_decode_exception);
+    /// @throws err_decode_exception
+    int transport_msg_decode(const char *mbuf, size_t len, transport_msg<Alloc>& a_tm);
 
     void process_message(const char* a_buf, size_t a_size);
 
@@ -209,29 +295,31 @@ protected:
         }
 
         boost::asio::const_buffer b(data, sz);
-        m_io_service.post(
-            boost::bind(&connection<Handler, Alloc>::do_write, this->shared_from_this(), b));
+        auto pthis = this->shared_from_this();
+        m_io_service.post([pthis, b]() { pthis->do_write(b); });
     }
 
     /// Get connection type from string. If successful the string is 
     /// modified to exclude the "...://" prefix.
     /// @param <s> is a connection address (e.g. "tcp://node@host").
     /// @return connection type derived from <tt>s</tt>.
-    static connection_type parse_connection_type(std::string& s) 
-        throw(std::runtime_error);
+    /// @throws std::runtime_error
+    static connection_type parse_connection_type(std::string& s);
 
-    /// Establish connection to \a a_remote_node. The call is non-blocking -
+    /// Establish connection to \a a_remote_nodename. The call is non-blocking -
     /// it will immediately returned, and Handler's on_connect() or 
     /// on_error() callback will be invoked on successful/failed connection
     /// status.
-    virtual void connect(const std::string& a_this_node, 
-                         const std::string& a_remote_node,
-                         const std::string& a_cookie)
-        throw(std::runtime_error)
+    /// @throws std::runtime_error
+    virtual void connect(uint32_t a_this_creation,
+                         atom     a_this_node,
+                         atom     a_remote_nodename,
+                         atom     a_cookie)
     {
-        m_this_node   = a_this_node;
-        m_remote_node = a_remote_node;
-        m_cookie      = a_cookie;
+        m_this_creation     = a_this_creation;
+        m_this_node         = a_this_node;
+        m_remote_nodename   = a_remote_nodename;
+        m_cookie            = a_cookie;
     }
 
     /// Set the socket to non-blocking mode and issue on_connect() callback.
@@ -250,12 +338,12 @@ protected:
         m_handler->on_connect(this);
 
         const boost::asio::mutable_buffers_1 buffers(m_rd_end, rd_capacity());
+        auto  pthis = this->shared_from_this();
         async_read(
             buffers,
             boost::asio::transfer_at_least(s_header_size),
-            boost::bind(&connection<Handler, Alloc>::handle_read, this->shared_from_this(), 
-                boost::asio::placeholders::error,
-                boost::asio::placeholders::bytes_transferred));
+            [pthis](auto& ec, auto bytes) { pthis->handle_read(ec, bytes); }
+        );
     }
 
     template <class MutableBuffers, class CompletionCondition, class ReadHandler>
@@ -265,8 +353,8 @@ protected:
     void async_write(const MutableBuffers& b, const CompletionCondition& c, ReadHandler h);
 
 public:
-    typedef Handler handler_type;
-    typedef boost::shared_ptr<connection<Handler, Alloc> > pointer;
+    using handler_type  = Handler;
+    using pointer       = boost::shared_ptr<connection<Handler, Alloc>>;
 
     /// Create a connection object given of specific type and connect to peer
     /// endpoint given by \a a_addr.
@@ -282,12 +370,13 @@ public:
     /// \endverbatim
     /// @param a_cookie security cookie.
     static pointer create(
-        boost::asio::io_service& a_svc,
-        handler_type*      a_h,
-        const std::string& a_this_node,
-        const std::string& a_node,
-        const std::string& a_cookie,
-        const Alloc&       a_alloc = Alloc());
+        boost::asio::io_service&    a_svc,
+        handler_type*               a_h,
+        uint32_t                    a_this_creation,
+        atom                        a_this_node,
+        atom                        a_node,
+        atom                        a_cookie,
+        const Alloc&                a_alloc = Alloc());
 
     virtual ~connection() {
         if (handler()->verbose() >= VERBOSE_TRACE)
@@ -323,14 +412,16 @@ public:
     }
 
     virtual int native_socket() = 0;
+    virtual uint64_t remote_flags() const = 0;
 
     /// Address of connected peer.
-    virtual std::string         peer_address() const    { return ""; }
-    const   std::string&        remote_node()  const    { return m_remote_node; }
-    const   std::string&        this_node()    const    { return m_this_node; }
-    const   std::string&        cookie()       const    { return m_cookie; }
-    Handler*                    handler()               { return m_handler; }
-    boost::asio::io_service&    io_service()            { return m_io_service; }
+    virtual std::string         peer_address()      const   { return ""; }
+    atom                        remote_nodename()   const   { return m_remote_nodename; }
+    atom                        local_nodename()    const   { return m_this_node; }
+    uint32_t                    local_creation()    const   { return m_this_creation; }
+    atom                        cookie()            const   { return m_cookie; }
+    Handler*                    handler()                   { return m_handler; }
+    boost::asio::io_service&    io_service()                { return m_io_service; }
 
     /// Send a message \a a_msg to the remote node.
     void send(const transport_msg<Alloc>& a_msg);
@@ -345,8 +436,8 @@ public:
 //------------------------------------------------------------------------------
 
 } // namespace connect
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
-#include <eixx/connect/transport_otp_connection.ipp>
+#include <eixx/connect/transport_otp_connection.hxx>
 
 #endif // _EIXX_TRANSPORT_OTP_CONNECTION_HPP_

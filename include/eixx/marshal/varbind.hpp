@@ -9,23 +9,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -38,8 +34,31 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <map>
 #include <eixx/marshal/eterm.hpp>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
+
+/// Name-value pair associating an eterm with an atom name
+template <class Alloc>
+struct epair : std::pair<atom, eterm<Alloc> > {
+    typedef std::pair<atom, eterm<Alloc> > base;
+
+    epair(atom a_name, const eterm<Alloc>& a_value) : base(a_name, a_value) {}
+
+#if __cplusplus >= 201103L
+    epair(atom a_name, eterm<Alloc>&& a_value) : base(a_name, std::move(a_value)) {}
+    epair(const epair& a_rhs)                  : base(a_rhs) {}
+    epair(epair&& a_rhs)                       : base(std::forward<epair>(a_rhs)) {}
+
+    epair& operator=(const epair& a_rhs) {
+        return base::operator=(static_cast<const base&>(a_rhs));
+    }
+
+#endif
+
+    atom                name()  const { return base::first;  }
+    const eterm<Alloc>& value() const { return base::second; }
+    eterm<Alloc>&       value()       { return base::second; }
+};
 
 /**
  * This class maintains bindings of variables to values.
@@ -52,16 +71,29 @@ class varbind {
         std::ostream& out, const varbind<AllocT>& binding);
 
 protected:
-    using eterm_map_t = std::map<string<Alloc>, eterm<Alloc>, std::less<string<Alloc>>,
-        typename std::allocator_traits<Alloc>::template rebind_alloc<std::pair<const string<Alloc>, eterm<Alloc>>>>;
+    using eterm_map_t =
+        std::map<
+            atom, eterm<Alloc>, std::less<atom>,
+            typename std::allocator_traits<Alloc>::
+                template rebind_alloc<std::pair<const atom, eterm<Alloc>>>
+        >;
 
 public:
     explicit varbind(const Alloc& a_alloc = Alloc())
-        : m_term_map(std::less< string<Alloc> >(), a_alloc)
+        : m_term_map(std::less<atom>(), a_alloc)
     {}
 
     varbind(const varbind<Alloc>& rhs) : m_term_map(rhs.m_term_map)
     {}
+
+#if __cplusplus >= 201103L
+    varbind(std::initializer_list<epair<Alloc>> a_list) {
+        m_term_map.insert(a_list.begin(), a_list.end());
+    }
+//     varbind(std::initializer_list<std::pair<atom, eterm<Alloc>> a_list) {
+//         m_term_map.insert(a_list.begin(), a_list.end());
+//     }
+#endif
 
     void copy(const varbind<Alloc>& rhs) { m_term_map = rhs.m_term_map; }
 
@@ -72,12 +104,16 @@ public:
      * @param a_term eterm to bind (must be non-zero).
      */
     void bind(const char* a_var_name, const eterm<Alloc>& a_term) {
-        bind(string<Alloc>(a_var_name), a_term);
+        bind(atom(a_var_name), a_term);
     }
 
     void bind(const string<Alloc>& a_var_name, const eterm<Alloc>& a_term) {
+        bind(atom(a_var_name), a_term);
+    }
+
+    void bind(atom a_var_name, const eterm<Alloc>& a_term) {
         // bind only if is unbound
-        m_term_map.insert(std::pair<string<Alloc>, eterm<Alloc> >(a_var_name, a_term));
+        m_term_map.insert(std::make_pair(a_var_name, a_term));
     }
 
     /**
@@ -86,24 +122,44 @@ public:
      * @return bound eterm pointer if variable is bound, 0 otherwise
      */
     const eterm<Alloc>*
-    find(const char* a_var_name) const { return find(string<Alloc>(a_var_name)); }
+    find(const char* a_var_name) const { return find(atom(a_var_name)); }
 
     const eterm<Alloc>*
-    find(const string<Alloc>& a_var_name) const {
+    find(const string<Alloc>& a_var_name) const { return find(atom(a_var_name)); }
+
+    const eterm<Alloc>*
+    find(atom a_var_name) const {
         typename eterm_map_t::const_iterator p = m_term_map.find(a_var_name);
         return (p != m_term_map.end()) ? &p->second : NULL;
     }
 
     const eterm<Alloc>*
     operator[] (const char* a_var_name) const {
-        return (*this)[string<Alloc>(a_var_name)];
+        return (*this)[atom(a_var_name)];
     }
 
     const eterm<Alloc>*
     operator[] (const string<Alloc>& a_var_name) const {
+        return (*this)[atom(a_var_name)];
+    }
+
+    const eterm<Alloc>*
+    operator[] (atom a_var_name) const {
         const eterm<Alloc>* p = find(a_var_name);
         if (!p) throw err_unbound_variable(a_var_name.c_str());
         return p;
+    }
+
+    const eterm<Alloc>& get(const char* a_var_name) const {
+        auto    res = (*this)[a_var_name];
+        assert (res);
+        return *res;
+    }
+
+    const eterm<Alloc>& get(atom a_var_name) const {
+        auto    res = (*this)[a_var_name];
+        assert (res);
+        return *res;
     }
 
     /**
@@ -117,19 +173,16 @@ public:
             bind(it->first, it->second);
     }
 
-    /**
-     * Reset this binding
-     */
+    /// Reset this binding
     void clear() { m_term_map.clear(); }
 
-    /**
-     * Convert varbind to string
-     */
+    /// Convert varbind to string
     void dump(std::ostream& out) const { out << *this; }
 
-    /**
-     * Return the number of bound variables held in internal dictionary.
-     */
+    /// Dump to string
+    std::string to_string() const { std::stringstream s; dump(s); return s.str(); }
+
+    /// Return the number of bound variables held in internal dictionary.
     size_t count() const { return m_term_map.size(); }
 
 protected:
@@ -137,17 +190,17 @@ protected:
 };
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 namespace std {
 
     template <class Alloc>
-    ostream& operator<< (ostream& out, const EIXX_NAMESPACE::marshal::varbind<Alloc>& binding) {
-        using namespace EIXX_NAMESPACE::marshal;
+    ostream& operator<< (ostream& out, const eixx::marshal::varbind<Alloc>& binding) {
+        using namespace eixx::marshal;
 
         for (typename varbind<Alloc>::eterm_map_t::const_iterator
                 it = binding.m_term_map.begin(); it != binding.m_term_map.end(); ++it)
-            out << "    " << it->first << " = " << it->second << std::endl;
+            out << "    " << it->first.to_string() << " = " << it->second << std::endl;
         return out;
     }
 

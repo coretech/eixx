@@ -9,23 +9,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -37,24 +33,11 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/marshal/visit_subst.hpp>
 #include <ei.h>
 
-namespace EIXX_NAMESPACE {
+namespace eixx    {
 namespace marshal {
 
 template <class Alloc>
-template <int N> 
-inline list<Alloc>::list(const eterm<Alloc> (&items)[N], const Alloc& alloc)
-    : base_t(alloc) {
-    init(items, N, alloc);
-}
-
-template <class Alloc>
-inline list<Alloc>::list(const eterm<Alloc> items[], size_t N, const Alloc& alloc)
-    : base_t(alloc) {
-    init(items, N, alloc);
-}
-
-template <class Alloc>
-void list<Alloc>::init(const eterm<Alloc> items[], size_t N, const Alloc& alloc) {
+void list<Alloc>::init(const eterm<Alloc>* items, size_t N, const Alloc& alloc) {
     size_t n = N > 0 ? N : 1;
     m_blob = new blob_t(sizeof(header_t) + n*sizeof(cons_t), alloc);
 
@@ -65,34 +48,39 @@ void list<Alloc>::init(const eterm<Alloc> items[], size_t N, const Alloc& alloc)
     l_header->alloc_size    = n;
     l_header->size          = N;
 
-    for (size_t i=0; i < N; i++) {
-        BOOST_ASSERT(items[i].initialized());
-        new (&hd[i].node) eterm<Alloc>(items[i]);
-        hd[i].next = &hd[i+1];
+    for(auto p = items, end = items+N; p != end; ++p, ++hd) {
+        BOOST_ASSERT(p->initialized());
+        new (&hd->node) eterm<Alloc>(*p);
+        hd->next = hd+1;
     }
 
     if (N == 0)
         l_header->tail = NULL;
     else {
-        l_header->tail = &hd[n-1];
-        hd[N-1].next   = NULL;
+        l_header->tail = hd-1;
+        l_header->tail->next = NULL;
     }
 }
 
 template <class Alloc>
-list<Alloc>::list(const cons_t* a_head, int a_len, const Alloc& alloc) : base_t(alloc)
+list<Alloc>::list(const cons_t* a_head, size_t a_len, const Alloc& alloc)
+    : base_t(alloc)
 {
-    unsigned int alloc_size;
+    size_t alloc_size;
 
-    if (a_len >= 0) {
+    if (a_len > 0) {
         alloc_size = a_len;
-    } else if (a_len == -1) {
-        a_len = 0;
+    } else {
         for (const cons_t* p = a_head; p; p = p->next)
             a_len++;
         alloc_size = a_len;
-    } else
-        throw err_bad_argument("List of negative length!");
+    }
+
+    // If this is an empty list - no allocation is needed
+    if (alloc_size == 0) {
+        m_blob = empty_list();
+        return;
+    }
 
     m_blob = new blob_t(sizeof(header_t) + alloc_size*sizeof(cons_t), alloc);
     header_t* l_header      = header();
@@ -113,11 +101,21 @@ list<Alloc>::list(const cons_t* a_head, int a_len, const Alloc& alloc) : base_t(
 }
 
 template <class Alloc>
-list<Alloc>::list(const char *buf, int& idx, size_t size, const Alloc& a_alloc) : base_t(a_alloc) 
+list<Alloc>::list(const char *buf, uintptr_t& idx, size_t size, const Alloc& a_alloc)
+    : base_t(a_alloc)
 {
-    int arity;
-    if (ei_decode_list_header(buf, &idx, &arity) < 0)
+    BOOST_ASSERT(idx <= INT_MAX);
+    int n;
+    if (ei_decode_list_header(buf, (int*)&idx, &n) < 0)
         err_decode_exception("Error decoding list header", idx);
+
+    size_t arity = static_cast<size_t>(n);
+    // If this is an empty list - no allocation is needed
+    if (arity == 0) {
+        m_blob = empty_list();
+        return;
+    }
+
     m_blob = new blob_t(sizeof(header_t) + arity*sizeof(cons_t), a_alloc);
     header_t* l_header = header();
     l_header->initialized = true;
@@ -125,15 +123,15 @@ list<Alloc>::list(const char *buf, int& idx, size_t size, const Alloc& a_alloc) 
     l_header->size        = arity;
 
     cons_t* hd = l_header->head;
-    for (int i=0; i < arity; i++) {
+    for (cons_t* end = hd+arity; hd != end; ++hd) {
         eterm<Alloc> et(buf, idx, size, a_alloc);
-        new (&hd[i].node) eterm<Alloc>(et);
-        hd[i].next = &hd[i+1];
+        new (&hd->node) eterm<Alloc>(et);
+        hd->next = hd+1;
     }
     if (arity == 0) {
         l_header->tail = NULL;
     } else {
-        l_header->tail = &hd[arity-1];
+        l_header->tail = hd-1;
         l_header->tail->next = NULL;
         if (*(buf+idx) != ERL_NIL_EXT)
             throw err_decode_exception("Not a NIL list!", idx);
@@ -143,7 +141,7 @@ list<Alloc>::list(const char *buf, int& idx, size_t size, const Alloc& a_alloc) 
 }
 
 template <class Alloc>
-void list<Alloc>::encode(char* buf, int& idx, size_t size) const
+void list<Alloc>::encode(char* buf, uintptr_t& idx, size_t size) const
 {
     BOOST_ASSERT(initialized());
     char* s = buf + idx;
@@ -152,7 +150,11 @@ void list<Alloc>::encode(char* buf, int& idx, size_t size) const
     } else {
         put8(s,ERL_LIST_EXT);
         const header_t* l_header = header();
-        put32be(s,l_header->size);
+        auto sz = l_header->size;
+        if (sz > UINT32_MAX)
+            throw err_encode_exception("LIST_EXT length exceeds maximum");
+        uint32_t len = (uint32_t)sz;
+        put32be(s, len);
         idx += 5;
         for(const cons_t* p = l_header->head; p; p = p->next) {
             visit_eterm_encoder visitor(buf, idx, size);
@@ -170,8 +172,8 @@ list<Alloc> list<Alloc>::tail(size_t idx) const
 {
     const header_t* l_header = header();
     const cons_t* p = l_header->head;
-    int len = (int)l_header->size - (int)idx - 1;
-    if (len < 0)
+    size_t len = l_header->size - idx - 1;
+    if (idx >= l_header->size)
         throw err_bad_argument("List too short");
     for (size_t i=0; i <= idx; i++)
         p = p->next;
@@ -282,4 +284,4 @@ std::ostream& list<Alloc>::dump(std::ostream& out, const varbind<Alloc>* vars) c
 }
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx

@@ -10,23 +10,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -35,9 +31,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #include <string>
 #include <eixx/eterm_exception.hpp>
+#include <eixx/marshal/am.hpp>
 #include <eixx/marshal/varbind.hpp>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
 /**
@@ -48,76 +45,110 @@ namespace marshal {
  * If you use '_' as variable, it will allways succeeds in matching, but
  * it will not be bound.
  **/
-template <class Alloc>
-class var : protected string<Alloc>
+class var
 {
-    typedef string<Alloc> base_t;
+    atom       m_name;
+    eterm_type m_type;
+
+    template <class Alloc>
+    bool check_type(const eterm<Alloc>& t) const {
+        return is_any() || m_type == UNDEFINED || t.type() == m_type
+            || (m_type == STRING && t.is_list() && t.to_list().empty());
+    }
+
+    eterm_type set(eterm_type t) { return m_name == am_ANY_ ? UNDEFINED : t; }
+
 public:
-    var(const Alloc& a = Alloc())                       : base_t("_", a) {}
-    var(const char* s, const Alloc& a = Alloc())        : base_t(s, a) {}
-    var(const std::string& s, const Alloc& a = Alloc()) : base_t(s.c_str(), s.size(), a) {}
-    var(const char* s, size_t n, const Alloc& a = Alloc()) : base_t(s, n, a) {}
-    var(const var<Alloc>& s) : base_t(s) {}
+    var(eterm_type t = UNDEFINED)
+        : var(am_ANY_, t)
+    {
+        static_assert(sizeof(var) == sizeof(uint64_t), "Invalid class size!");
+    }
 
-    const char*             c_str()         const { return base_t::c_str(); }
-    const string<Alloc>&    name()          const { return *this; }
-    size_t                  size()          const { return base_t::size();  }
-    size_t                  length()        const { return base_t::length(); }
+    var(const atom& s, eterm_type t = UNDEFINED)    : m_name(s) { m_type = set(t); }
 
-    bool                    is_any()        const { return base_t::size() == 1 && c_str()[0] == '_'; }
+    var(const char* s, eterm_type t = UNDEFINED)            : var(atom(s), t) {}
+    var(const std::string& s, eterm_type t = UNDEFINED)     : var(atom(s), t) {}
+    template <typename Alloc>
+    var(const string<Alloc>& s, eterm_type t = UNDEFINED)   : var(atom(s), t) {}
+    var(const char* s, size_t n, eterm_type t = UNDEFINED)  : var(atom(s, n), t) {}
+    var(const var& v)                                       : var(v.name(), v.type()) {}
+
+    const char*             c_str()         const { return m_name.c_str(); }
+    const std::string&      str()           const { return m_name.to_string(); }
+    atom                    name()          const { return m_name; }
+    size_t                  length()        const { return m_name.length(); }
+
+    eterm_type              type()          const { return m_type; }
+    bool                    is_any()        const { return name() == am_ANY_; }
+
+    std::string to_string() const {
+        std::stringstream s;
+        s << name().to_string() << type_to_type_string(type(), true);
+        return s.str();
+    }
 
     template <typename T>
-    bool        operator==(const T&)        const { return false; }
+    bool operator==(const T&) const { return false; }
+
+    template <typename T>
+    bool operator<(const T&)  const { return false; }
 
     size_t encode_size() const { throw err_encode_exception("Cannot encode vars!"); }
 
-    void encode(char* buf, int& idx, size_t size) const {
+    void encode(char*, uintptr_t&, size_t) const {
         throw err_encode_exception("Cannot encode vars!");
-    }    
-
-    const eterm<Alloc>*
-    find_unbound(const varbind<Alloc>* binding = NULL) const {
-        if (is_any()) return NULL;
-        return binding ? binding->find(c_str()) : NULL;
     }
 
+    template <typename Alloc>
+    const eterm<Alloc>*
+    find_unbound(const varbind<Alloc>* binding = NULL) const {
+        return binding ? binding->find(name()) : NULL;
+    }
+
+    template <typename Alloc>
     bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const
     {
-        if (is_any()) throw err_unbound_variable(c_str());
-        const eterm<Alloc>* term = binding ? binding->find(c_str()) : NULL;
-        if (!term) throw err_unbound_variable(c_str());
+        const eterm<Alloc>* term = binding ? binding->find(name()) : NULL;
+        if (!term || !check_type(*term))
+            throw err_unbound_variable(c_str());
         out = *term;
         return true;
     }
 
+    template <typename Alloc>
     bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding) const
     {
         if (is_any()) return true;
-        const eterm<Alloc>* value = binding ? binding->find(c_str()) : NULL;
+        if (!binding) return false;
+        const eterm<Alloc>* value = binding->find(name());
         if (value)
-            return value->match(pattern, binding);
-        if (binding != NULL) {
-            // Bind the variable
-            eterm<Alloc> et;
-            binding->bind(name(), pattern.subst(et, binding) ? et : pattern);
-        }
+            return check_type(*value) ? value->match(pattern, binding) : false;
+        if (!check_type(pattern))
+            return false;
+        // Bind the variable
+        eterm<Alloc> et;
+        binding->bind(name(), pattern.subst(et, binding) ? et : pattern);
         return true; 
     }
 
+    template <typename Alloc>
     std::ostream& dump(std::ostream& out, const varbind<Alloc>* binding = NULL) const {
-        if (is_any()) { return out << c_str(); }
         const eterm<Alloc>* term = binding ? binding->find(name()) : NULL;
-        return out << (term ? term->to_string(std::string::npos, binding) : *this);
+        return out << (term && check_type(*term)
+                        ? term->to_string(std::string::npos, binding) : to_string());
     }
 };
 
+BOOST_STATIC_ASSERT(sizeof(var) == 8);
+
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 namespace std {
     template <typename Alloc>
-    ostream& operator<< (ostream& out, const EIXX_NAMESPACE::marshal::var<Alloc>& s) {
-        return s.dump(out);
+    ostream& operator<< (ostream& out, eixx::marshal::var s) {
+        return s.dump(out, (const eixx::marshal::varbind<Alloc>*)NULL);
     }
 } // namespace std
 

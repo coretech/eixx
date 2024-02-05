@@ -1,55 +1,10 @@
 #ifndef _ASYNC_WAIT_TIMEOUT_HPP_
 #define _ASYNC_WAIT_TIMEOUT_HPP_
 
-#include <boost/asio.hpp>
+#include <eixx/util/timeout.hpp>
+#include <boost/asio/basic_deadline_timer.hpp>
 
 namespace boost {
-
-namespace asio {
-namespace error {
-
-    enum timer_errors {
-        timeout = ETIMEDOUT
-    };
-
-    namespace detail {
-
-        struct timer_category : public boost::system::error_category {
-            const char* name() const { return "asio.timer"; }
-
-            std::string message(int value) const {
-                if (value == error::timeout)
-                    return "Operation timed out";
-                return "asio.timer error";
-            }
-        };
-
-    } // namespace detail
-
-    inline const boost::system::error_category& get_timer_category() {
-        static detail::timer_category instance;
-        return instance;
-    }
-
-    static const boost::system::error_category& timer_category
-          = boost::asio::error::get_timer_category();
-
-} // namespace error
-} // namespace asio
-
-namespace system {
-
-    template<> struct is_error_code_enum<boost::asio::error::timer_errors> {
-        static const bool value = true;
-    };
-
-    inline boost::system::error_code make_error_code(boost::asio::error::timer_errors e) {
-        return boost::system::error_code(
-            static_cast<int>(e), boost::asio::error::get_timer_category());
-    }
-
-} // namespace system
-
 namespace asio {
 
     class deadline_timer_ex : public basic_deadline_timer<boost::posix_time::ptime>
@@ -64,7 +19,7 @@ namespace asio {
                 //if (ec == error::operation_aborted)
                 //    return;
                 system::error_code e = ec == system::error_code()
-                        ? system::make_error_code(error::timeout)
+                        ? make_error_code(error::timeout)
                         : ec;
                 m_h(e);
             }
@@ -99,8 +54,7 @@ namespace asio {
         }
     };
 
-    } // namespace asio
-
+} // namespace asio
 } // namespace boost
 
 #endif // _ASYNC_WAIT_TIMEOUT_HPP_

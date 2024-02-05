@@ -1,26 +1,23 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the EPI (Erlang Plus Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2005 Hector Rivas Gandara <keymon@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
+#include <boost/version.hpp>
 
 #include <fstream>
 #include <sstream>
@@ -29,11 +26,11 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/connect/basic_otp_node_local.hpp>
 #include <ei.h>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace connect {
 
 namespace {
-    std::string get_default_cookie() {
+    atom get_default_cookie() {
         const char* home = getenv("HOME") ? getenv("HOME") : "";
         if (home) {
             std::stringstream s;
@@ -50,32 +47,32 @@ namespace {
                 file >> cookie;
                 size_t n = cookie.find('\n');
                 if (n != std::string::npos) cookie.erase(n);
-                return cookie;
+                if (cookie.size() > EI_MAX_COOKIE_SIZE)
+                    throw err_bad_argument("Cookie size too long", cookie.size());
+                return atom(cookie);
             }
         }
-        return "no_cookie";
+        return atom();
     }
 
 } // namespace
 
-std::string basic_otp_node_local::s_default_cookie = get_default_cookie();
+atom        basic_otp_node_local::s_default_cookie = get_default_cookie();
 std::string basic_otp_node_local::s_localhost      = boost::asio::ip::host_name();
 
 basic_otp_node_local::basic_otp_node_local(
     const std::string& a_nodename, const std::string& a_cookie)
-    throw (std::runtime_error, err_bad_argument)
 {
     set_nodename(a_nodename, a_cookie);
 }
 
 void basic_otp_node_local::set_nodename(
     const std::string& a_nodename, const std::string& a_cookie)
-    throw (std::runtime_error, err_bad_argument)
 {
-    m_cookie = a_cookie.empty() ? s_default_cookie : a_cookie;
-
     if (m_cookie.size() > EI_MAX_COOKIE_SIZE)
         throw err_bad_argument("Cookie size too long", m_cookie.size());
+
+    m_cookie = a_cookie.empty() ? s_default_cookie : atom(a_cookie);
 
     std::string::size_type pos = a_nodename.find('@');
 
@@ -88,10 +85,15 @@ void basic_otp_node_local::set_nodename(
     }
 
     std::string short_hostname;
+    boost::system::error_code ec;
+    boost::asio::ip::address::from_string( m_hostname, ec );
     pos = m_hostname.find('.');
-
     std::stringstream str;
-    if (pos != std::string::npos) {
+
+    if(! ec) {
+        str << m_alivename << '@' << m_hostname;
+        m_longname = m_alivename+'@'+m_hostname;
+    } else if (pos != std::string::npos) {
         str << m_alivename << '@' << m_hostname.substr(0, pos);
         m_longname = m_alivename+'@'+m_hostname;
     } else {
@@ -119,4 +121,4 @@ void basic_otp_node_local::set_nodename(
 }
 
 } // namespace connect
-} // namespace EIXX_NAMESPACE
+} // namespace eixx

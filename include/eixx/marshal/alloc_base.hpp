@@ -9,23 +9,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -36,13 +32,14 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/marshal/defaults.hpp>
 #include <eixx/util/common.hpp>
 #include <iostream>
+#include <memory>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
     template <typename T, typename Alloc>
     struct alloc_base_impl {
-        typedef typename Alloc::template rebind<T>::other T_alloc_type;
+        using T_alloc_type = typename std::allocator_traits<Alloc>::template rebind_alloc<T>;
 
         struct alloc_impl: public T_alloc_type {
             alloc_impl() : T_alloc_type() {}
@@ -56,11 +53,11 @@ namespace marshal {
     /// empty base class optimization.
     template <typename T, typename Alloc>
     class alloc_base : private alloc_base_impl<T, Alloc>::alloc_impl {
-        typedef alloc_base_impl<T, Alloc>   impl_t;
-        typedef typename impl_t::alloc_impl base_t;
+        using impl_t = alloc_base_impl<T, Alloc>;
+        using base_t = typename impl_t::alloc_impl;
     public:
-        typedef Alloc                           allocator_type;
-        typedef typename impl_t::T_alloc_type   T_alloc_type;
+        using allocator_type = Alloc;
+        using T_alloc_type   = typename impl_t::T_alloc_type;
 
         alloc_base() {}
         alloc_base(const Alloc& alloc) : base_t(alloc) {}
@@ -78,19 +75,23 @@ namespace marshal {
     /// \brief Reference-counted blob of memory to store the object of type T.
     template<typename T, typename Alloc>
     class blob : private boost::noncopyable
-               , public Alloc::template rebind<T>::other
+               , public std::allocator_traits<Alloc>::template rebind_alloc<T>
     {
-        typedef typename Alloc::template rebind<T>::other base_t;
-        typedef typename Alloc::template rebind<blob<T,Alloc> >::other blob_alloc_t;
+        using base_t       = typename std::allocator_traits<Alloc>::template rebind_alloc<T>;
+        using blob_alloc_t = typename std::allocator_traits<Alloc>::template rebind_alloc<blob<T,Alloc>>;
 
-        atomic<int>  m_rc;
-        const size_t m_size;
-        T*           m_data;
+        atomic<uint32_t>  m_rc;
+        const size_t      m_size;
+        T*                m_data;
 
         ~blob() {
-            this->deallocate(m_data, m_size);
+            if (m_data)
+                this->deallocate(m_data, m_size);
         }
 
+        /// This is needed in order to allow blobs to be hosted inside
+        /// std::unique_ptr:
+        template <typename U> friend struct std::default_delete;
     public:
         blob(const Alloc& a = Alloc())
             : base_t(a), m_rc(1), m_size(0), m_data(NULL)
@@ -129,7 +130,7 @@ namespace marshal {
         /// Increment internal reference count.
         void   inc_rc()             { ++m_rc; }
         /// Return internal reference count. Use for debugging only.
-        int    use_count()  const   { return m_rc; }
+        uint32_t    use_count()  const   { return m_rc; }
 
         const Alloc& get_allocator() const {
             return *reinterpret_cast<const Alloc*>(this);
@@ -142,20 +143,20 @@ namespace marshal {
 
         /// This method overrides the new() operator for this class
         /// so that the blob memory is taken from the Alloc allocator.
-        static void* operator new(size_t sz) {
+        static void* operator new([[maybe_unused]] size_t sz) {
             BOOST_ASSERT(sz == sizeof(blob<T,Alloc>));
             return get_blob_alloc().allocate(1);
         }
 
         /// This method overrides the new() operator for this class
         /// so that the blob memory is released to the Alloc allocator.
-        static void operator delete(void* p, size_t sz) {
+        static void operator delete(void* p, [[maybe_unused]] size_t sz) {
             BOOST_ASSERT(sz == sizeof(blob<T,Alloc>));
             get_blob_alloc().deallocate(static_cast<blob<T,Alloc>*>(p), 1);
         }
     };
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 #endif // _EIXX_ETERM_BASE_HPP_

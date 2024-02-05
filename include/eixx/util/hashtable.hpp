@@ -1,40 +1,38 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the EPI (Erlang Plus Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
 #ifndef _EIXX_HASHTABLE_HPP_
 #define _EIXX_HASHTABLE_HPP_
 
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
+#include <eixx/util/sync.hpp>
+
+#if defined(__GXX_EXPERIMENTAL_CXX0X__) || __cplusplus >= 201103L
 #include <unordered_map>
 #else
 #include <boost/unordered_map.hpp>
 #endif
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace detail {
 
 namespace src = 
-    #ifdef __GXX_EXPERIMENTAL_CXX0X__
+    #if defined(__GXX_EXPERIMENTAL_CXX0X__) || __cplusplus >= 201103L
     std;
     #else
     boost;
@@ -58,8 +56,9 @@ struct hsieh_hash_fun {
     static uint16_t get16bits(const char* d) { return *(const uint16_t *)d; }
 
     size_t operator()(const char* data) const {
-        int len = strlen(data);
-        uint32_t hash = len, tmp;
+        size_t len = strlen(data);
+        BOOST_ASSERT(len <= UINT32_MAX);
+        uint32_t hash = (uint32_t)len, tmp;
         int rem;
 
         if (len <= 0 || data == NULL) return 0;
@@ -80,14 +79,14 @@ struct hsieh_hash_fun {
         switch (rem) {
             case 3: hash += get16bits (data);
                     hash ^= hash << 16;
-                    hash ^= data[sizeof (uint16_t)] << 18;
+                    hash ^= uint32_t(data[sizeof (uint16_t)]) << 18;
                     hash += hash >> 11;
                     break;
             case 2: hash += get16bits (data);
                     hash ^= hash << 11;
                     hash += hash >> 17;
                     break;
-            case 1: hash += *data;
+            case 1: hash += uint32_t(*data);
                     hash ^= hash << 10;
                     hash += hash >> 1;
         }
@@ -100,7 +99,7 @@ struct hsieh_hash_fun {
         hash ^= hash << 25;
         hash += hash >> 6;
 
-        return hash;
+        return static_cast<size_t>(hash);
     }
 };
 
@@ -108,7 +107,7 @@ struct hsieh_hash_fun {
 
 typedef detail::hash_map_base<const char*, size_t, detail::hsieh_hash_fun> char_int_hash_map;
 
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 #endif // _EIXX_HASHTABLE_HPP_
 

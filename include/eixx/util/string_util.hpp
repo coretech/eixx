@@ -10,23 +10,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -38,12 +34,13 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <string>
 #include <eixx/marshal/defaults.hpp>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 
 /// Print the content of a buffer to \a out stream in the form:
 /// \verbatim <<I1, I2, ..., In>> \endverbatim where <tt>Ik</tt> is
 /// unsigned integer less than 256.
-static inline std::ostream& to_binary_string(std::ostream& out, const char* buf, size_t sz) {
+template <typename Stream>
+inline Stream& to_binary_string(Stream& out, const char* buf, size_t sz) {
     out << "<<";
     const char* begin = buf, *end = buf + sz;
     for(const char* p = begin; p != end; ++p) {
@@ -56,17 +53,49 @@ static inline std::ostream& to_binary_string(std::ostream& out, const char* buf,
 /// Convert the content of a buffer to a binary string in the form:
 /// \verbatim <<I1, I2, ..., In>> \endverbatim where <tt>Ik</tt> is
 /// unsigned integer less than 256.
-static inline std::string to_binary_string(const char* a, size_t sz) {
+inline std::string to_binary_string(const char* a, size_t sz) {
     std::stringstream oss;
     to_binary_string(oss, a, sz);
     return oss.str();
 }
 
-} // namespace EIXX_NAMESPACE
+/// Convert string to integer
+///
+/// @tparam TillEOL instructs that the integer must be validated till a_end.
+///                 If false, "123ABC" is considered a valid 123 number. Otherwise
+///                 the function will return NULL.
+/// @return input string ptr beyond the the value read if successful, NULL otherwise
+//
+template <typename T, bool TillEOL = true>
+inline const char* fast_atoi(const char* a_str, const char* a_end, T& res) {
+    if (a_str >= a_end) return nullptr;
+
+    bool l_neg;
+
+    if (*a_str == '-') { l_neg = true; ++a_str; }
+    else               { l_neg = false; }
+
+    T x = 0;
+
+    do {
+        const int c = *a_str - '0';
+        if (c < 0 || c > 9) {
+            if (TillEOL)
+               return nullptr;
+            break;
+        }
+        x = (x << 3) + (x << 1) + c;
+    } while (++a_str != a_end);
+
+    res = l_neg ? -x : x;
+    return a_str;
+}
+
+} // namespace eixx
 
 namespace std {
 
-    template <int N>
+    template <size_t N>
     std::string to_string(const uint8_t (&s)[N]) { return std::string((const char*)s, N); }
 
 }

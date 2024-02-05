@@ -1,108 +1,138 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the EPI (Erlang Plus Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
 #include <boost/test/unit_test.hpp>
 #include "test_alloc.hpp"
 #include <eixx/marshal/eterm.hpp>
+#include <eixx/marshal/list.hpp>
 
-using namespace EIXX_NAMESPACE;
-using EIXX_NAMESPACE::marshal::eterm;
+using namespace eixx;
+using eixx::marshal::eterm;
+using eixx::marshal::list;
+
+static int g_alloc_count;
 
 template <class T>
 struct counted_alloc : public std::allocator<char> {
-    static int count;
     counted_alloc() {}
-    counted_alloc(const counted_alloc<T>& a) {}
+    counted_alloc(const counted_alloc<T>& /*a*/) {}
 
     template <typename _T>
     counted_alloc(const _T&) {}
 
-    typedef T* pointer;
-    typedef const T* const_pointer;
-    typedef T& reference;
-    typedef const T& const_reference;
+    using pointer         = T*;
+    using const_pointer   = T const*;
+    using reference       = T&;
+    using const_reference = T const&;
+    using value_type      = T;
 
-    template <typename _T> struct rebind {
-        typedef counted_alloc<_T> other;
+    template <typename U> struct rebind {
+        using other = counted_alloc<U>;
     };
 
     void construct(pointer p, const T& value) {
         ::new((void*)p) T(value);
     }
-                
-    pointer allocate(size_t sz) {
-        count++;
-        return static_cast<pointer>(::operator new(sz * sizeof(T)));
+
+    pointer allocate(size_t n) {
+        ++g_alloc_count;
+        return static_cast<pointer>(::operator new(n * sizeof(T)));
     }
 
-    void deallocate(pointer p, size_t sz) {
-        count--;
+    void deallocate(pointer p, size_t /*sz*/) {
+        --g_alloc_count;
         ::operator delete(p);
     }
 
-    void destroy(pointer __p) { __p->~T(); }
+    void destroy(pointer p) { p->~T(); }
 };
-
-template <typename T>
-int counted_alloc<T>::count = 0;
 
 BOOST_AUTO_TEST_CASE( test_refc_format )
 {
     typedef counted_alloc<char> my_alloc;
     my_alloc alloc;
+
+    list<my_alloc> lst(nullptr);  // Allocates static global empty list
+    BOOST_CHECK_EQUAL(2, g_alloc_count);
+
     {
         for (int i=0; i < 10; i++) {
-            eterm<my_alloc> term = eterm<my_alloc>::format(alloc, 
+            BOOST_CHECK_EQUAL(2, g_alloc_count);
+            eterm<my_alloc> term = eterm<my_alloc>::format(alloc,
                 "[~i, [{~s, ~i}, {~a, ~i}], {~f, ~i}, ~a]", 
                   1,   "ab", 2,  "xx", 3,   2.1, 10, "abc");
-            BOOST_REQUIRE_EQUAL(LIST, term.type());
+            BOOST_CHECK_EQUAL(LIST, term.type());
+            BOOST_CHECK_EQUAL(2+(6*2), g_alloc_count);
 
             for (int j=0; j <= 10; j++)
-                eterm<my_alloc> term = eterm<my_alloc>::format(alloc, 
+                eterm<my_alloc> term2 = eterm<my_alloc>::format(alloc, 
                     "{~i, [{~s, ~i}, {~a, ~i}], {~f, ~i}, ~a}", 
                       1,   "ab", 2,  "xx", 3,   2.1, 10, "abc");
         }
     }
-    BOOST_REQUIRE_EQUAL(0, my_alloc::count);
+    BOOST_CHECK_EQUAL(2, g_alloc_count);
 }
 
-BOOST_AUTO_TEST_CASE( test_pool_format )
+BOOST_AUTO_TEST_CASE( test_refc_pool_format )
 {
-    typedef boost::pool_allocator<char> my_alloc;
+    using my_alloc = boost::pool_allocator<char>;
     my_alloc alloc;
     {
         for (int i=0; i < 10; i++) {
             eterm<my_alloc> term = eterm<my_alloc>::format(alloc, 
                 "[~i, [{~s, ~i}, {~a, ~i}], {~f, ~i}, ~a]", 
                   1,   "ab", 2,  "xx", 3,   2.1, 10, "abc");
-            BOOST_REQUIRE_EQUAL(LIST, term.type());
+            BOOST_CHECK_EQUAL(LIST, term.type());
 
             for (int j=0; j <= 10; j++) {
-                eterm<my_alloc> term = eterm<my_alloc>::format(alloc, 
+                eterm<my_alloc> term2 = eterm<my_alloc>::format(alloc, 
                     "{~i, [{~s, ~i}, {~a, ~i}], {~f, ~i}, ~a}", 
                       1,   "ab", 2,  "xx", 3,   2.1, 10, "abc");
-                BOOST_REQUIRE_EQUAL(TUPLE, term.type());
+                BOOST_CHECK_EQUAL(TUPLE, term2.type());
             }
         }
     }
+}
+
+BOOST_AUTO_TEST_CASE( test_refc_list )
+{
+    using my_alloc = counted_alloc<char>;
+    using term     = eterm<my_alloc>;
+    my_alloc alloc;
+
+    list<my_alloc> lst(nullptr);  // Allocates static global empty list
+    BOOST_CHECK_EQUAL(2, g_alloc_count);
+
+    {
+        term et = list<my_alloc>({1, 2, 3}, alloc);
+        BOOST_CHECK_EQUAL(4, g_alloc_count); // 1 for blob_t, 1 for blob's data
+        auto am = et;
+        BOOST_CHECK_EQUAL(4, g_alloc_count);
+    }
+    BOOST_CHECK_EQUAL(2, g_alloc_count);
+
+    {
+        // Construct a nil list
+        term et = list<my_alloc>(nullptr);
+        BOOST_CHECK_EQUAL(2, g_alloc_count);
+        auto am = et;
+        BOOST_CHECK_EQUAL(2, g_alloc_count);
+    }
+    BOOST_CHECK_EQUAL(2, g_alloc_count);
 }

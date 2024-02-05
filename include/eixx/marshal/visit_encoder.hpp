@@ -9,23 +9,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -34,27 +30,36 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #include <eixx/marshal/visit.hpp>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
 class visit_eterm_encoder: public static_visitor<visit_eterm_encoder, void> {
     mutable char* buf;
-    int&  idx;
+    uintptr_t&    idx;
     const size_t  size;
 public: 
-    visit_eterm_encoder(char* a_buf, int& a_idx, size_t a_size)
+    visit_eterm_encoder(char* a_buf, uintptr_t& a_idx, size_t a_size)
         : buf(a_buf), idx(a_idx), size(a_size)
     {}
 
-    void operator() (bool   a) const { ei_encode_boolean (buf, &idx, a); }
-    void operator() (long   a) const { ei_encode_longlong(buf, &idx, a); }
-    void operator() (double a) const { ei_encode_double  (buf, &idx, a); }
+    void operator() (bool a) const {
+        BOOST_ASSERT(idx <= INT_MAX);
+        ei_encode_boolean(buf, (int*)&idx, a);
+    }
+    void operator() (long a) const {
+        BOOST_ASSERT(idx <= INT_MAX);
+        ei_encode_longlong(buf, (int*)&idx, a);
+    }
+    void operator() (double a) const {
+        BOOST_ASSERT(idx <= INT_MAX);
+        ei_encode_double(buf, (int*)&idx, a);
+    }
 
     template <typename T>
     void operator()(const T& a) const { a.encode(buf, idx, size); }
 };
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 #endif // _IMPL_VISIT_ENCODER_HPP_

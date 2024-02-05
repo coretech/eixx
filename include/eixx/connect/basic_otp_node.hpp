@@ -13,23 +13,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (c) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -37,6 +33,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #ifndef _EIXX_BASIC_OTP_NODE_HPP_
 #define _EIXX_BASIC_OTP_NODE_HPP_
 
+#include <atomic>
 #include <time.h>
 #include <boost/function.hpp>
 #include <eixx/connect/basic_otp_node_local.hpp>
@@ -47,10 +44,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/util/sync.hpp>
 #include <eixx/marshal/eterm.hpp>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace connect {
 
-using namespace EIXX_NAMESPACE;
+using namespace eixx;
 using marshal::epid;
 using marshal::port;
 using marshal::ref;
@@ -78,41 +75,24 @@ class basic_otp_node: public basic_otp_node_local {
     typedef transport_msg<Alloc>                transport_msg_t;
     typedef basic_otp_connection<Alloc,Mutex>   connection_t;
 
-    typedef EIXX_NAMESPACE::detail::hash_map_base<
+    typedef eixx::detail::hash_map_base<
         atom, typename connection_t::pointer, atom_con_hash_fun
     > conn_hash_map;
 
-    class atom_con_hash_fun {
-        conn_hash_map& map;
+    class rpc_server;
 
-        static size_t init_default_hash_size() {
-            const char* p = getenv("EI_MAX_NODE_CONNECTIONS");
-            int n = (p && p[0]) ? atoi(p) : 1024;
-            if (n < 0 || n >= 64*1024) n = 1024;
-            return n;
-        }
-    public:
-        static size_t get_default_hash_size() {
-            static const size_t s_max_node_connections = init_default_hash_size();
-            return s_max_node_connections;
-        }
-        
-        atom_con_hash_fun(conn_hash_map* a_map) : map(*a_map) {}
-
-        size_t operator()(const atom& data) const {
-            return data.index() % map.bucket_count();
-        }
-    };
-
-    uint8_t  m_creation;
-    uint32_t m_pid_count;
-    uint32_t m_port_count;
-    uint32_t m_serial;
-    uint32_t m_refid[3];
+    Mutex                                       m_lock;
+    uint32_t                                    m_creation;
+    std::atomic_uint_fast32_t                   m_pid_count;
+    std::atomic_uint_fast64_t                   m_port_count;
+    std::atomic_uint_fast64_t                   m_refid0;
+    #ifdef NEWER_REFERENCE_EXT
+    std::atomic_uint_fast64_t                   m_refid1;
+    #else
+    std::atomic_uint                            m_refid1;
+    #endif
 
     boost::asio::io_service&                    m_io_service;
-    Mutex                                       m_lock;
-    Mutex                                       m_inc_lock;
     basic_otp_mailbox_registry<Alloc, Mutex>    m_mailboxes;
     conn_hash_map                               m_connections;
     Alloc                                       m_allocator;
@@ -121,26 +101,30 @@ class basic_otp_node: public basic_otp_node_local {
     friend class basic_otp_connection<Alloc, Mutex>;
 
     void on_disconnect_internal(const connection_t& a_con,
-        const std::string& a_remote_node, const boost::system::error_code& err)
-    {
-        if (on_disconnect)
-            on_disconnect(*this, a_con, a_remote_node, err);
-    }
+        atom a_remote_nodename, const boost::system::error_code& err);
 
-    void report_status(report_level a_level, const connection_t* a_con, const std::string& s);
+    void report_status(report_level a_level,
+        const connection_t* a_con, const std::string& s);
+    void rpc_call(const epid<Alloc>& a_from, const ref<Alloc>& a_ref,
+        const atom& a_mod, const atom& a_fun, const list<Alloc>& a_args,
+        const eterm<Alloc>& a_gleader);
 
 protected:
     /// Publish the node port to epmd making this node known to the world.
-    void publish_port() throw (err_connection);
+    /// @throws err_connection
+    void publish_port();
 
     /// Unregister this node from epmd.
-    void unpublish_port() throw (err_connection);
+    /// @throws err_connection
+    void unpublish_port();
 
-    /// Send a message to a process ToProc which is either epid<Alloc> or 
+    /// Send a message to a process ToProc which is either epid<Alloc> or
     /// atom<Alloc> for registered names.
+    /// @throws err_no_process
+    /// @throws err_connection
     template <typename ToProc>
-    void send(const atom& a_to_node, ToProc a_to, const transport_msg<Alloc>& a_msg)
-        throw (err_no_process, err_connection);
+    void send(const atom& a_to_node,
+        ToProc a_to, const transport_msg<Alloc>& a_msg);
 public:
     typedef basic_otp_mailbox_registry<Alloc, Mutex> mailbox_registry_t;
 
@@ -151,7 +135,7 @@ public:
      *  hostname and port. ex: "ei:mynode@host.somewhere.com:3128"
      * @param a_cookie cookie to use
      * @param a_alloc is the allocator to use
-     * @param a_creation is the creation value to use (0 .. 2). This 
+     * @param a_creation is the creation value to use (0 .. 2). This
      *        argument is provided for being able to do determinitic testing.
      *        In production pass the default value, so that the creation value
      *        is determined automatically.
@@ -160,20 +144,15 @@ public:
      * @throws eterm_exception if there is an error in transport creation
      */
     basic_otp_node(boost::asio::io_service& a_io_svc,
-                   const atom& a_nodename = atom(),
-                   const std::string& a_cookie = "",
+                   const std::string& a_nodename = std::string(),
+                   const std::string& a_cookie = std::string(),
                    const Alloc& a_alloc = Alloc(),
-                   int8_t a_creation = -1)
-        throw (err_bad_argument, err_connection, eterm_exception);
+                   int8_t a_creation = -1);
 
     virtual ~basic_otp_node() { close(); }
 
     /// Change name of current node
-    void set_nodename(const atom& a_nodename, const std::string& a_cookie = "") {
-        close();
-        if (a_nodename != atom())
-            basic_otp_node_local::set_nodename(a_nodename.to_string(), a_cookie);
-    }
+    void set_nodename(const atom& a_nodename, const std::string& a_cookie = "");
 
     /// Get current verboseness level
     verbose_type verbose() const { return m_verboseness; }
@@ -185,16 +164,13 @@ public:
     /// Get the service object used by this node.
     boost::asio::io_service& io_service() { return m_io_service; }
 
+    /// Run the node's service dispatch
     void run()  { m_io_service.run();  }
+    /// Stop the node's service dispatch
     void stop() { m_io_service.stop(); }
 
-    void close() {
-        m_mailboxes.clear();
-        for(typename conn_hash_map::iterator
-            it = m_connections.begin(), end = m_connections.end(); it != end; ++it)
-            it->second->disconnect();
-        m_connections.clear();
-    }
+    /// Close all connections and empty the mailbox
+    void close();
 
     /**
      * Create a new mailbox with a new mailbox that can be used to send and
@@ -206,16 +182,9 @@ public:
      * @return new mailbox with a new pid.
      */
     basic_otp_mailbox<Alloc, Mutex>*
-    create_mailbox(const atom& a_reg_name = atom(), boost::asio::io_service* a_svc = NULL) {
-        boost::asio::io_service* p_svc = a_svc ? a_svc : &m_io_service;
-        return m_mailboxes.create_mailbox(a_reg_name, p_svc);
-    }
+    create_mailbox(const atom& a_name = atom(), boost::asio::io_service* a_svc = NULL);
 
-    void close_mailbox(basic_otp_mailbox<Alloc, Mutex>* a_mbox) {
-        if (a_mbox) {
-            m_mailboxes.erase(a_mbox);
-        }
-    }
+    void close_mailbox(basic_otp_mailbox<Alloc, Mutex>* a_mbox);
 
     /// Get a mailbox associated with a given atom name or epid.
     /// @param a_proc is either an atom name of a registered local process or epid.
@@ -226,13 +195,16 @@ public:
 
     /// Get a mailbox registered by a given atom name.
     basic_otp_mailbox<Alloc, Mutex>*
-    get_mailbox(const atom& a_name)         const { return m_mailboxes.get(a_name); }
+    get_mailbox(atom a_name)                const { return m_mailboxes.get(a_name); }
 
     /// Get a mailbox registered by a given epid.
     basic_otp_mailbox<Alloc, Mutex>*
     get_mailbox(const epid<Alloc>& a_pid)   const { return m_mailboxes.get(a_pid); }
 
-    const mailbox_registry_t& registry() const { return m_mailboxes; }
+    const mailbox_registry_t& registry()    const { return m_mailboxes; }
+
+    /// Register mailbox by given name
+    bool register_mailbox(const atom& a_name, basic_otp_mailbox<Alloc, Mutex>& a_mbox);
 
     /// Create a new unique pid
     epid<Alloc> create_pid();
@@ -244,7 +216,7 @@ public:
     ref<Alloc> create_ref();
 
     /// Get creation number
-    uint8_t creation() const { return m_creation; }
+    uint32_t creation() const { return m_creation; }
 
     /**
      * Set up a connection to an Erlang node, using given cookie
@@ -254,11 +226,11 @@ public:
      *          attempts in case of connection drops.
      * @returns A new connection. The connection has no receiver defined
      * and is not started.
+     * @throws err_connection
      */
     template <typename CompletionHandler>
     void connect(CompletionHandler h, const atom& a_remote_node,
-                 const std::string& a_cookie = "", size_t a_reconnect_secs = 0)
-        throw(err_connection);
+                 const atom& a_cookie = atom(), int a_reconnect_secs = 0);
 
     /**
      * Set up a connection to an Erlang node, using default cookie
@@ -267,47 +239,45 @@ public:
      *          attempts in case of connection drops.
      * @returns A new connection. The connection has no receiver defined
      * and is not started.
+     * @throws err_connection
      */
     template <typename CompletionHandler>
-    void connect(CompletionHandler h, const atom& a_remote_node, size_t a_reconnect_secs = 0)
-        throw(err_connection)
-    {
-        connect(h, a_remote_node, "", a_reconnect_secs);
-    }
+    void connect(CompletionHandler h, const atom& a_remote_nodename,
+                 int a_reconnect_secs = 0);
 
     /// Get connection identified by the \a a_node name.
     /// @throws err_connection if not connected to \a a_node._
-    connection_t& connection(const atom& a_nodename) const {
-        typename conn_hash_map::const_iterator l_con = m_connections.find(a_nodename);
-        if (l_con == m_connections.end())
-            throw err_connection("Not connected to node", a_nodename);
-        return *l_con->second.get();
-    }
+    connection_t& connection(atom a_nodename) const;
 
     /**
      * Callback invoked on disconnect from a peer node
      */
     boost::function<
-        //    OtpNode      OtpConnection     RemoteNodeName         ErrorCode
-        void (self&, const connection_t&, const std::string&, const boost::system::error_code&)
-    > on_disconnect; 
+        //    OtpNode      OtpConnection  RemoteNodeName         ErrorCode
+        void (self&, const connection_t&, atom, const boost::system::error_code&)
+    > on_disconnect;
 
     /**
      * Callback invoked if verbosity is different from VERBOSE_NONE. If not assigned,
-     * the content is printed to stderr. 
+     * the content is printed to stderr.
      */
     boost::function<
         //    OtpNode      OtpConnection     Status         Message
         void (self&, const connection_t*, report_level, const std::string&)
-    > on_status; 
+    > on_status;
 
+    boost::function<
+        eterm<Alloc> (const epid<Alloc>& a_from, const ref<Alloc>& a_ref,
+                      const atom& a_mod, const atom& a_fun, const list<Alloc>& a_args,
+                      const eterm<Alloc>& a_gleader)
+    > on_rpc_call;
     /**
      * Accept connections from client processes.
      * This method sets the socket listener for incoming connections and
      * registers the port with local epmd daemon.
      * @throws err_connection if cannot connect to epmd.
      */
-    void start_server() throw(err_connection);
+    void start_server();
 
     /**
      * Stop accepting connections from client processes.
@@ -317,31 +287,38 @@ public:
     void stop_server();
 
     /// Deliver a message to its local receipient mailbox.
-    void deliver(const transport_msg<Alloc>& a_tm)
-        throw (err_bad_argument, err_no_process, err_connection);
+    /// @throws err_bad_argument
+    /// @throws err_no_process
+    /// @throws err_connection
+    void deliver(const transport_msg<Alloc>& a_tm);
 
     /// Send a message \a a_msg from \a a_from pid to \a a_to pid.
     /// @param a_to is a remote process.
     /// @param a_msg is the message to send.
-    void send(const epid<Alloc>& a_to, const eterm<Alloc>& a_msg)
-        throw (err_no_process, err_connection);
+    /// @throws err_no_process
+    /// @throws err_connection
+    void send(const epid<Alloc>& a_to, const eterm<Alloc>& a_msg);
 
     /// Send a message \a a_msg to the remote process \a a_to on node \a a_node.
     /// The remote process \a a_to need not belong to node \a a_node.
     /// @param a_node is the node to send the message to.
     /// @param a_to is a remote process.
     /// @param a_msg is the message to send.
-    void send(const atom& a_node, const epid<Alloc>& a_to, const eterm<Alloc>& a_msg)
-        throw (err_no_process, err_connection);
+    /// @throws err_no_process
+    /// @throws err_connection
+    void send(const atom& a_node, const epid<Alloc>& a_to, const eterm<Alloc>& a_msg);
 
     /// Send a message \a a_msg to the local process registered as \a a_to.
-    void send(const epid<Alloc>& a_from, const atom& a_to, const eterm<Alloc>& a_msg)
-        throw (err_no_process, err_connection);
+    /// @throws err_no_process
+    /// @throws err_connection
+    void send(const epid<Alloc>& a_from, const atom& a_to, const eterm<Alloc>& a_msg);
 
     /// Send a message \a a_msg to the process registered as \a a_to_name
     /// on remote node \a a_node.
+    /// @throws err_no_process
+    /// @throws err_connection
     void send(const epid<Alloc>& a_from, const atom& a_to_node, const atom& a_to_name,
-        const eterm<Alloc>& a_msg) throw (err_no_process, err_connection);
+        const eterm<Alloc>& a_msg);
 
     /**
 	 * Send an RPC request to a remote Erlang node.
@@ -360,53 +337,62 @@ public:
 	 */
     void send_rpc(const epid<Alloc>& a_from, const atom& a_to_node,
                   const atom& a_mod, const atom& a_fun, const list<Alloc>& args,
-                  const epid<Alloc>* gleader = NULL)
-        throw (err_bad_argument, err_no_process, err_connection);
+                  const epid<Alloc>* gleader = NULL);
 
     /// Execute an equivalent of rpc:cast(...). Doesn't return any value.
+    /// @throws err_bad_argument
+    /// @throws err_no_process
+    /// @throws err_connection
     void send_rpc_cast(const epid<Alloc>& a_from, const atom& a_to_node,
                    const atom& a_mod, const atom& a_fun, const list<Alloc>& args,
-                  const epid<Alloc>* gleader = NULL)
-        throw (err_bad_argument, err_no_process, err_connection);
+                  const epid<Alloc>* gleader = NULL);
 
     /// Attempt to kill a remote process by sending
     /// an exit message to a_pid, with reason \a a_reason
+    /// @throws err_no_process
+    /// @throws err_connection
     void send_exit(const epid<Alloc>& a_from, const epid<Alloc>& a_to,
-        const eterm<Alloc>& a_reason) throw (err_no_process, err_connection);
+        const eterm<Alloc>& a_reason);
 
     /// Attempt to kill a remote process by sending
     /// an exit2 message to a_pid, with reason \a a_reason
+    /// @throws err_no_process
+    /// @throws err_connection
     void send_exit2(const epid<Alloc>& a_from, const epid<Alloc>& a_to,
-        const eterm<Alloc>& a_reason) throw (err_no_process, err_connection);
+        const eterm<Alloc>& a_reason);
 
     /// Link mailbox to the given pid.
     /// The given pid will receive an exit message when \a a_pid dies.
     /// @throws err_no_process
     /// @throws err_connection
-    void send_link(const epid<Alloc>& a_from, const epid<Alloc>& a_to)
-        throw (err_no_process, err_connection);
+    void send_link(const epid<Alloc>& a_from, const epid<Alloc>& a_to);
 
     /// UnLink the given pid
-    void send_unlink(const epid<Alloc>& a_from, const epid<Alloc>& a_to)
-        throw (err_no_process, err_connection);
+    /// @throws err_no_process
+    /// @throws err_connection
+    void send_unlink(const epid<Alloc>& a_from, const epid<Alloc>& a_to);
 
+    /// @throws err_no_process
+    /// @throws err_connection
     const ref<Alloc>&
-    send_monitor(const epid<Alloc>& a_from, const epid<Alloc>& a_to_pid)
-        throw (err_no_process, err_connection);
+    send_monitor(const epid<Alloc>& a_from, const epid<Alloc>& a_to_pid);
 
     /// Demonitor the \a a_to pid monitored by \a a_from pid using \a a_ref reference.
-    void send_demonitor(const epid<Alloc>& a_from, const epid<Alloc>& a_to, const ref<Alloc>& a_ref)
-        throw (err_no_process, err_connection);
+    /// @throws err_no_process
+    /// @throws err_connection
+    void send_demonitor(const epid<Alloc>& a_from, const epid<Alloc>& a_to, const ref<Alloc>& a_ref);
 
+    /// @throws err_no_process
+    /// @throws err_connection
     void send_monitor_exit(const epid<Alloc>& a_from, const epid<Alloc>& a_to,
-        const ref<Alloc>& a_ref, const eterm<Alloc>& a_reason)
-        throw (err_no_process, err_connection);
+        const ref<Alloc>& a_ref, const eterm<Alloc>& a_reason);
 
 };
 
 } // namespace connect
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
-#include <eixx/connect/basic_otp_node.ipp>
+#include <eixx/connect/basic_otp_node.hxx>
+#include <eixx/connect/detail/basic_rpc_server.hpp>
 
 #endif // _EIXX_BASIC_OTP_NODE_HPP_

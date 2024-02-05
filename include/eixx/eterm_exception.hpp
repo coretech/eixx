@@ -9,23 +9,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (c) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -37,7 +33,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <sstream>
 #include <string>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 
 /**
  * Base class for the other eixx erlang exception classes.
@@ -47,10 +43,11 @@ public:
     eterm_exception() {}
     eterm_exception(const std::string& msg): m_msg(msg) {}
 
-    template <typename Arg>
-    eterm_exception(const std::string& msg, Arg a) {
+    template <typename... Arg>
+    eterm_exception(const std::string& msg, Arg&&... a) {
         std::ostringstream str;
-        str << msg << ": " << a;
+        str  << msg << ": ";
+        (str << ... << a); // Fold expression
         m_msg = str.str();
     }
 
@@ -63,11 +60,16 @@ protected:
     std::string m_msg;
 };
 
-/**
- * Exception for invalid terms
- */
-class err_invalid_term: public eterm_exception {
-public:
+/// Exception for invalid atoms
+struct err_atom_not_found: public eterm_exception {
+    err_atom_not_found(std::string const& atom)
+        : eterm_exception("Atom '" + atom + "' not found")
+    {}
+    err_atom_not_found() : eterm_exception("Atom not found") {}
+};
+
+/// Exception for invalid terms
+struct err_invalid_term: public eterm_exception {
     err_invalid_term(const std::string &msg) : eterm_exception(msg) {}
 };
 
@@ -128,46 +130,69 @@ private:
 class err_format_exception: public eterm_exception {
     const char* m_pos;
     const char* m_start;
+    std::string m_what;
 public:
-    err_format_exception(const std::string &msg, const char* pos)
+    err_format_exception(
+        const std::string& msg, const char* pos, const char* start = nullptr)
         : eterm_exception(msg)
         , m_pos(pos)
-    {}
-
-    const char* what() const throw() {
+        , m_start(start)
+    {
         std::stringstream s; s << m_msg << " (" << (m_pos - m_start) << ").";
-        return s.str().c_str();
+        m_what = s.str();
     }
-    const char* pos() const         { return m_pos; }
-    void start(const char* a_start) { m_start = a_start; }
+
+    const char* what() const throw() { return m_what.c_str(); }
+    const char* pos() const          { return m_pos; }
+    void start(const char* a_start)  { m_start = a_start; }
 };
 
 /**
  * Exception while encoding
  */
 class err_encode_exception: public eterm_exception {
-    int m_code;
+    int         m_code;
+    long        m_value;
+    std::string m_what;
 public:
-    err_encode_exception(const std::string &msg, int code=0)
+    err_encode_exception(const std::string &msg, int code=0, long value=0)
         : eterm_exception(msg)
         , m_code(code)
-    {}
-
-    const char* what() const throw() {
-        std::stringstream s; s << m_msg << " (" << m_code << ").";
-        return s.str().c_str();
+        , m_value(value)
+    {
+        std::stringstream s; s << m_msg;
+        if (value != 0) s << " ("    << m_value << ")";
+        if (code  > -1) s << " at (" << m_code  << ")";
+        m_what = s.str();
     }
-    int code() const { return m_code; }
+
+    const char* what()  const throw() { return m_what.c_str(); }
+    int         code()  const         { return m_code;  }
+    long        value() const         { return m_value; }
 };
 
 /**
  * Exception while decoding
  */
-class err_decode_exception: public err_encode_exception {
+class err_decode_exception: public eterm_exception {
+    uintptr_t   m_pos;
+    long        m_value;
+    std::string m_what;
 public:
-    err_decode_exception(const std::string &msg, int code=0)
-        : err_encode_exception(msg, code)
-    {}
+    err_decode_exception(const std::string &msg, uintptr_t pos=0, long value=0)
+        : eterm_exception(msg)
+        , m_pos(pos)
+        , m_value(value)
+    {
+        std::stringstream s; s << m_msg;
+        if (value != 0) s << " ("    << m_value << ")";
+        s << " at (" << m_pos  << ")";
+        m_what = s.str();
+    }
+
+    const char* what()  const throw() { return m_what.c_str(); }
+    uintptr_t   pos()   const         { return m_pos;  }
+    long        value() const         { return m_value; }
 };
 
 class err_empty_list: public eterm_exception {
@@ -197,6 +222,6 @@ public:
     err_no_process(const std::string &msg, T arg): err_bad_argument(msg, arg) {}
 };
 
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 #endif // _EIXX_EXCEPTION_HPP_

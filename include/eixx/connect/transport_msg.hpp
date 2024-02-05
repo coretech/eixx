@@ -9,23 +9,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (c) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -37,15 +33,15 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/util/common.hpp>
 #include <ei.h>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace connect {
 
-using EIXX_NAMESPACE::marshal::tuple;
-using EIXX_NAMESPACE::marshal::list;
-using EIXX_NAMESPACE::marshal::eterm;
-using EIXX_NAMESPACE::marshal::epid;
-using EIXX_NAMESPACE::marshal::ref;
-using EIXX_NAMESPACE::marshal::trace;
+using eixx::marshal::tuple;
+using eixx::marshal::list;
+using eixx::marshal::eterm;
+using eixx::marshal::epid;
+using eixx::marshal::ref;
+using eixx::marshal::trace;
 
 /// Erlang distributed transport messages contain message type,
 /// control message with message routing and other details, and 
@@ -76,6 +72,14 @@ public:
         , NO_EXCEPTION_MASK = (uint32_t)EXCEPTION-1
     };
 
+private:
+    // Note that the m_type is mutable so that we can call set_error_flag() on
+    // constant objects.
+    mutable transport_msg_type  m_type;
+    tuple<Alloc>                m_cntrl;
+    eterm<Alloc>                m_msg;
+
+public:
     transport_msg() : m_type(UNDEFINED) {}
 
     transport_msg(int a_msgtype, const tuple<Alloc>& a_cntrl, const eterm<Alloc>* a_msg = NULL)
@@ -89,17 +93,23 @@ public:
         : m_type(rhs.m_type), m_cntrl(rhs.m_cntrl), m_msg(rhs.m_msg)
     {}
 
+    transport_msg(transport_msg&& rhs)
+        : m_type(rhs.m_type), m_cntrl(std::move(rhs.m_cntrl)), m_msg(std::move(rhs.m_msg))
+    {
+        rhs.m_type = UNDEFINED;
+    }
+
     /// Return a string representation of the transport message type.
     const char* type_string() const;
 
     /// Transport message type
     transport_msg_type  type()      const { return m_type; }
-    int                 to_type()   const { return bit_scan_forward(m_type); }
+    int                 to_type()   const { return m_type == UNDEFINED ? 0 : bit_scan_forward(m_type); }
     const tuple<Alloc>& cntrl()     const { return m_cntrl;}
     const eterm<Alloc>& msg()       const { return m_msg;  }
     /// Returns true when the transport message contains message payload
     /// associated with SEND or REG_SEND message type.
-    bool                has_msg()   const { return m_msg.type() != EIXX_NAMESPACE::UNDEFINED; }
+    bool                has_msg()   const { return m_msg.type() != eixx::UNDEFINED; }
 
     /// Indicates that there was an error processing this message
     bool  has_error()               const { return (m_type & EXCEPTION) == EXCEPTION; }
@@ -110,9 +120,9 @@ public:
     }
 
     /// Return the term representing the message sender. The sender is
-    /// usually a pid, except for MONITOR_P_EXIT message type for which 
+    /// usually a pid, except for MONITOR_P_EXIT message type for which
     /// the sender can be either pid or atom name.
-    const eterm<Alloc>& from() const {
+    const eterm<Alloc>& sender() const {
         switch (m_type) {
             case REG_SEND:
             case LINK:
@@ -134,14 +144,15 @@ public:
 
     /// This function may only raise exception for MONITOR_P_EXIT
     /// message types if the message sender is given by name rather than by pid.
-    const epid<Alloc>& from_pid() const throw (err_wrong_type) {
-        return from().to_pid();
+    /// @throws err_wrong_type
+    const epid<Alloc>& sender_pid() const {
+        return sender().to_pid();
     }
 
     /// Return the term representing the message sender. The sender is
     /// usually a pid, except for MONITOR_P|DEMONITOR_P message type for which 
     /// the sender can be either pid or atom name.
-    const eterm<Alloc>& to() const {
+    const eterm<Alloc>& recipient() const {
         switch (m_type) {
             case REG_SEND:
                 return m_cntrl[3];
@@ -167,15 +178,18 @@ public:
 
     /// This function may only raise exception for MONITOR_P|DEMONITOR_P
     /// message types if the message sender is given by name rather than by pid.
-    const epid<Alloc>& to_pid() const throw (err_wrong_type) {
-        return to().to_pid();
+    /// @throws err_wrong_type
+    const epid<Alloc>& recipient_pid() const {
+        return recipient().to_pid();
     }
 
-    const atom& to_name() const throw (err_wrong_type) {
-        return to().to_atom();
+    /// @throws err_wrong_type
+    const atom& recipient_name() const {
+        return recipient().to_atom();
     }
 
-    const eterm<Alloc>& trace_token() const throw (err_wrong_type) {
+    /// @throws err_wrong_type
+    const eterm<Alloc>& trace_token() const {
         switch (m_type) {
             case SEND_TT:
             case EXIT_TT:
@@ -186,7 +200,8 @@ public:
         }
     }
 
-    const ref<Alloc>& get_ref() const throw (err_wrong_type) {
+    /// @throws err_wrong_type
+    const ref<Alloc>& get_ref() const {
         switch (m_type) {
             case MONITOR_P:
             case DEMONITOR_P:
@@ -197,7 +212,8 @@ public:
         }
     }
 
-    const eterm<Alloc>& reason() const throw (err_wrong_type) {
+    /// @throws err_wrong_type
+    const eterm<Alloc>& reason() const {
         switch (m_type) {
             case EXIT:
             case EXIT2:         return m_cntrl[3];
@@ -221,8 +237,8 @@ public:
 
     /// Set the current message to represent a SEND message containing \a a_msg to
     /// be sent to \a a_to pid.
-    void set_send(const epid<Alloc>& a_to, const eterm<Alloc>& a_msg, 
-        const Alloc& a_alloc = Alloc())
+    void set_send(const epid<Alloc>& a_to, const eterm<Alloc>& a_msg,
+                  const Alloc& a_alloc = Alloc())
     {
         const trace<Alloc>* token = trace<Alloc>::tracer(marshal::TRACE_GET);
         if (unlikely(token)) {
@@ -238,8 +254,8 @@ public:
 
     /// Set the current message to represent a REG_SEND message containing
     /// \a a_msg to be sent from \a a_from pid to \a a_to registered mailbox.
-    void set_reg_send(const epid<Alloc>& a_from, const atom& a_to, const eterm<Alloc>& a_msg,
-        const Alloc& a_alloc = Alloc())
+    void set_reg_send(const epid<Alloc>& a_from, const atom& a_to,
+                      const eterm<Alloc>& a_msg, const Alloc& a_alloc = Alloc())
     {
         const trace<Alloc>* token = trace<Alloc>::tracer(marshal::TRACE_GET);
         if (unlikely(token)) {
@@ -255,9 +271,10 @@ public:
 
     /// Set the current message to represent a LINK message.
     void set_link(const epid<Alloc>& a_from, const epid<Alloc>& a_to,
-        const Alloc& a_alloc = Alloc())
+                  const Alloc& a_alloc = Alloc())
     {
-        const tuple<Alloc>& l_cntrl = tuple<Alloc>::make(ERL_LINK, a_from, a_to, a_alloc);
+        const tuple<Alloc>& l_cntrl =
+            tuple<Alloc>::make(ERL_LINK, a_from, a_to, a_alloc);
         set(LINK, l_cntrl, NULL);
     }
 
@@ -265,7 +282,8 @@ public:
     void set_unlink(const epid<Alloc>& a_from, const epid<Alloc>& a_to,
         const Alloc& a_alloc = Alloc())
     {
-        const tuple<Alloc>& l_cntrl = tuple<Alloc>::make(ERL_UNLINK, a_from, a_to, a_alloc);
+        const tuple<Alloc>& l_cntrl =
+            tuple<Alloc>::make(ERL_UNLINK, a_from, a_to, a_alloc);
         set(UNLINK, l_cntrl, NULL);
     }
 
@@ -313,7 +331,7 @@ public:
     }
 
     /// Set the current message to represent a MONITOR_EXIT message.
-    void set_monitor_exit(const epid<Alloc>& a_from, const epid<Alloc>& a_to, 
+    void set_monitor_exit(const epid<Alloc>& a_from, const epid<Alloc>& a_to,
         const ref<Alloc>& a_ref, const eterm<Alloc>& a_reason,
         const Alloc& a_alloc = Alloc())
     {
@@ -384,12 +402,6 @@ public:
     }
 
 private:
-    // Note that the m_type is mutable so that we can call set_error_flag() on
-    // constant objects.
-    mutable transport_msg_type  m_type;
-    tuple<Alloc>                m_cntrl;
-    eterm<Alloc>                m_msg;
-
     void set_exit_internal(int a_type, int a_trace_type,
         const epid<Alloc>& a_from, const epid<Alloc>& a_to,
         const eterm<Alloc>& a_reason, const Alloc& a_alloc = Alloc())
@@ -444,18 +456,19 @@ const char* transport_msg<Alloc>::type_string() const {
         case DEMONITOR_P:       return "DEMONITOR_P";
         case MONITOR_P_EXIT:    return "MONITOR_P_EXIT";
         default: {
-            std::stringstream str; str << "UNSUPPORTED(" << bit_scan_forward(m_type) << ')';
-            return str.str().c_str();
+            // std::stringstream str; str << "UNSUPPORTED(" << bit_scan_forward(m_type) << ')';
+            // return str.str().c_str();
+            return "UNSUPPORTED";
         }
     }
 }
 
 } // namespace connect
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 namespace std {
     template <typename Alloc>
-    ostream& operator<< (ostream& out, EIXX_NAMESPACE::connect::transport_msg<Alloc>& a_msg) {
+    ostream& operator<< (ostream& out, eixx::connect::transport_msg<Alloc>& a_msg) {
         return a_msg.dump(out);
     }
 } // namespace std

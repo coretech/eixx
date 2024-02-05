@@ -12,24 +12,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
-Copyright (C) 2005 Hector Rivas Gandara <keymon@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -40,8 +35,9 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/marshal/eterm.hpp>
 #include <boost/function.hpp>
 #include <list>
+#include <stdarg.h>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
 // Forward declaration
@@ -56,11 +52,12 @@ class eterm_pattern_action;
  */
 template <class Alloc>
 class eterm_pattern_matcher {
-    std::list<eterm_pattern_action<Alloc>, Alloc> m_pattern_list;
+    using ListAlloc   = typename std::allocator_traits<Alloc>::
+                        template rebind_alloc<eterm_pattern_action<Alloc>>;
 public:
-    typedef std::list<eterm_pattern_action<Alloc>, Alloc> list_t;
-    typedef typename list_t::const_iterator const_iterator;
-    typedef typename list_t::iterator       iterator;
+    using list_t = std::list<eterm_pattern_action<Alloc>, ListAlloc>;
+    using const_iterator = typename list_t::const_iterator;
+    using iterator       = typename list_t::iterator;
 
     struct init_struct {
         eterm<Alloc> p;
@@ -77,7 +74,7 @@ public:
      * patterns in the match list shouldn't be checked, the
      * functor must return true.
      */
-    typedef boost::function<
+    typedef std::function<
         bool (const eterm<Alloc>& a_pattern,
               const varbind<Alloc>& a_binding,
               long  a_opaque) > pattern_functor_t;
@@ -93,14 +90,21 @@ public:
      * is the same as calling eterm_pattern_matcher() and iteratively
      * adding patterns using push_back() calls.
      */
-    template <int N>
+    template <size_t N>
     eterm_pattern_matcher(
         const struct init_struct (&a_patterns)[N], pattern_functor_t a_fun,
-        const Alloc& a_alloc = Alloc()
-    )
+        const Alloc& a_alloc = Alloc())
         : m_pattern_list(a_alloc)
     {
         init(a_patterns, N, a_fun);
+    }
+
+    eterm_pattern_matcher(
+        std::initializer_list<eterm_pattern_action<Alloc>> a_list,
+        const Alloc& a_alloc = Alloc())
+        : m_pattern_list(a_alloc)
+    {
+        std::copy(a_list.begin(), a_list.end(), m_pattern_list.begin());
     }
 
     /**
@@ -128,13 +132,25 @@ public:
         return m_pattern_list.back();
     }
 
+    const eterm_pattern_action<Alloc>& 
+    push_back(const eterm<Alloc>& a_pattern) {
+        m_pattern_list.push_back(eterm_pattern_action<Alloc>(a_pattern));
+        return m_pattern_list.back();
+    }
+
     /**
      * Add a pattern to the beginning of the list.
      * The pattern is assign to a smart pointer.
      */
     const eterm_pattern_action<Alloc>& 
     push_front(const eterm<Alloc>& a_pattern, pattern_functor_t a_fun, long a_opaque=0) {
-        m_pattern_list.push_back(eterm_pattern_action<Alloc>(a_pattern, a_fun, a_opaque));
+        m_pattern_list.push_front(eterm_pattern_action<Alloc>(a_pattern, a_fun, a_opaque));
+        return m_pattern_list.front();
+    }
+
+    const eterm_pattern_action<Alloc>& 
+    push_front(const eterm<Alloc>& a_pattern) {
+        m_pattern_list.push_front(eterm_pattern_action<Alloc>(a_pattern));
         return m_pattern_list.front();
     }
 
@@ -177,23 +193,19 @@ public:
      * @param a_binding is an optional object containing
      *        predefined variable bindings that will be passed
      *        to every pattern.
-     * @return true if any one pattern matched the term.
+     * @return 0 if no terms matched, or the matched term's index + 1.
      */
-    bool match(const eterm<Alloc>& a_term, 
-               varbind<Alloc>* a_binding = NULL) const 
+    int match(const eterm<Alloc>& a_term,
+              varbind<Alloc>* a_binding = NULL) const
     {
-        bool res = false;
-        for(typename std::list<eterm_pattern_action<Alloc>, Alloc>::const_iterator 
-                it = m_pattern_list.begin(), end = m_pattern_list.end();
-                it != end; ++it)
-        {
-            if (it->operator() (a_term, a_binding)) {
-                res = true;
-                break;
-            }
-        }
-        return res;
+        int i = 1;
+        for(auto it = m_pattern_list.begin(), end = m_pattern_list.end(); it != end; ++it, ++i)
+            if ((*it)(a_term, a_binding))
+                return i;
+        return 0;
     }
+private:
+    list_t m_pattern_list;
 };
 
 /**
@@ -205,10 +217,21 @@ class eterm_pattern_action {
     typedef typename eterm_pattern_matcher<Alloc>::pattern_functor_t
         pattern_functor_t;
 
-    eterm<Alloc> m_pattern;
-    pattern_functor_t m_fun;
-    long m_opaque;
+    eterm<Alloc>        m_pattern;
+    pattern_functor_t   m_fun;
+    long                m_opaque;
 public:
+    /**
+     * Create a new pattern match action without a functor.
+     * @param a_pattern pattern to match
+     */
+    explicit eterm_pattern_action(const eterm<Alloc>& a_pattern)
+        : m_pattern(a_pattern), m_opaque(0)
+    {
+      auto fun = [](auto& /*pattern*/, auto& /*vars*/, long /*opaque*/) { return true; };
+      m_fun = fun;
+    }
+
     /**
      * Create a new pattern match functor.
      * @param a_pattern pattern to match
@@ -221,6 +244,53 @@ public:
         : m_pattern(a_pattern), m_fun(a_fun), m_opaque(a_opaque)
     {
         BOOST_ASSERT(m_fun != NULL);
+    }
+
+    template <typename Lambda>
+    eterm_pattern_action(
+        const eterm<Alloc>& a_pattern, const Lambda& a_fun, long a_opaque = 0)
+        : m_pattern(a_pattern), m_fun(a_fun), m_opaque(a_opaque)
+    {
+        BOOST_ASSERT(m_fun != NULL);
+    }
+
+    eterm_pattern_action(
+        const Alloc& a_alloc, pattern_functor_t& a_fun, long a_opaque,
+        const char* a_pat_fmt, ...)
+        : m_fun(a_fun), m_opaque(a_opaque)
+    {
+        BOOST_ASSERT(m_fun != NULL);
+        va_list ap;
+        va_start(ap, a_pat_fmt);
+        try         { m_pattern = eterm<Alloc>::format(a_alloc, &a_pat_fmt, &ap); }
+        catch (...) { va_end(ap); throw; }
+        va_end(ap);
+    }
+
+    eterm_pattern_action(const eterm_pattern_action& a_rhs)
+        : m_pattern(a_rhs.m_pattern)
+        , m_fun(a_rhs.m_fun)
+        , m_opaque(a_rhs.m_opaque)
+    {}
+
+    eterm_pattern_action(eterm_pattern_action&& a_rhs)
+        : m_pattern(std::move(a_rhs.m_pattern))
+        , m_fun(std::move(a_rhs.m_fun))
+        , m_opaque(a_rhs.m_opaque)
+    {}
+
+    void operator=(eterm_pattern_action&& a_rhs)
+    {
+        m_pattern = std::move(a_rhs.m_pattern);
+        m_fun     = std::move(a_rhs.m_fun);
+        m_opaque  = a_rhs.m_opaque;
+    }
+
+    void operator=(const eterm_pattern_action& a_rhs)
+    {
+        m_pattern = a_rhs.m_pattern;
+        m_fun     = a_rhs.m_fun;
+        m_opaque  = a_rhs.m_opaque;
     }
 
     bool operator() (const eterm<Alloc>& a_term,
@@ -244,6 +314,6 @@ public:
 };
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 #endif // _EI_MATCH_HPP_

@@ -10,23 +10,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -34,6 +30,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #define _IMPL_TUPLE_HPP_
 
 #include <ostream>
+#include <initializer_list>
 #include <boost/static_assert.hpp>
 #include <eixx/marshal/alloc_base.hpp>
 #include <eixx/marshal/varbind.hpp>
@@ -41,7 +38,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/marshal/visit_encode_size.hpp>
 #include <ei.h>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
 template <typename Alloc> class eterm;
@@ -58,7 +55,17 @@ class tuple {
     }
     size_t get_init_size() const {
         BOOST_ASSERT(m_blob);
-        return m_blob->data()[m_blob->size()-1].to_long()-1;
+        return static_cast<size_t>(m_blob->data()[m_blob->size()-1].to_long()-1);
+    }
+
+    void release() { release(m_blob); m_blob = nullptr; }
+
+    void release(blob<eterm<Alloc>, Alloc>* p) {
+        if (p && p->release(false)) {
+            for(size_t i=0, n=size(); i < n; i++)
+                p->data()[i].~eterm();
+            p->free();
+        }
     }
 
 protected:
@@ -79,12 +86,12 @@ public:
     explicit tuple(size_t arity, const Alloc& alloc = Alloc())
         : m_blob(new blob<eterm<Alloc>, Alloc>(arity+1, alloc))
     {
-	 #ifndef __clang__
+        #ifndef __clang__
         #pragma GCC diagnostic push
         #pragma GCC diagnostic ignored "-Wclass-memaccess"
         #endif
         memset(m_blob->data(), 0, sizeof(eterm<Alloc>)*m_blob->size());
-	#ifndef __clang__
+        #ifndef __clang__
         #pragma GCC diagnostic pop
         #endif
         set_init_size(0);
@@ -95,12 +102,15 @@ public:
         m_blob->inc_rc();
     }
 
-    template <int N>
-    tuple(const eterm<Alloc> (&items)[N], const Alloc& alloc = Alloc()) {
-        new (this) tuple<Alloc>(items, N, alloc);
+    tuple(tuple<Alloc>&& a) : m_blob(a.m_blob) {
+        a.m_blob = nullptr;
     }
 
-    tuple(const eterm<Alloc> items[], size_t a_size, const Alloc& alloc = Alloc())
+    template <size_t N>
+    tuple(const eterm<Alloc> (&items)[N], const Alloc& alloc = Alloc())
+        : tuple(items, N, alloc) {}
+
+    tuple(const eterm<Alloc>* items, size_t a_size, const Alloc& alloc = Alloc())
         : m_blob(new blob<eterm<Alloc>, Alloc>(a_size+1, alloc)) {
         for(size_t i=0; i < a_size; i++) {
             new (&m_blob->data()[i]) eterm<Alloc>(items[i]);
@@ -108,25 +118,34 @@ public:
         set_init_size(a_size);
     }
 
+    tuple(std::initializer_list<eterm<Alloc>> list, const Alloc& alloc = Alloc())
+        : tuple(list.begin(), list.size(), alloc) {}
+
     /**
      * Decode the tuple from a binary buffer.
      */
-    tuple(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc());
+    tuple(const char* buf, uintptr_t& idx, size_t size, const Alloc& a_alloc = Alloc());
 
     ~tuple() {
-        if (m_blob && m_blob->release(false)) {
-            for(size_t i=0, n=size(); i < n; i++)
-                m_blob->data()[i].~eterm<Alloc>();
-            m_blob->free();
-        }
+        release();
     }
 
     tuple<Alloc>& operator= (const tuple<Alloc>& rhs) {
         if (this != &rhs) {
-            blob<eterm<Alloc>, Alloc>* p = m_blob;
+            auto p = m_blob;
             m_blob = rhs.m_blob;
-            m_blob->inc_rc();
-            if (p) p->release();
+            if (m_blob) m_blob->inc_rc();
+            release(p);
+        }
+        return *this;
+    }
+
+    tuple<Alloc>& operator= (tuple<Alloc>&& rhs) {
+        if (this != &rhs) {
+            auto p = m_blob;
+            m_blob = rhs.m_blob;
+            rhs.m_blob = nullptr;
+            release(p);
         }
         return *this;
     }
@@ -143,13 +162,27 @@ public:
         return true;
     }
 
-    const eterm<Alloc>& operator[] (int idx) const {
-        BOOST_ASSERT(m_blob && (size_t)idx < size());
+    bool operator< (const tuple<Alloc>& rhs) const {
+        if (size() < rhs.size())
+            return true;
+        if (size() > rhs.size())
+            return false;
+        for(const_iterator it1 = begin(),
+            it2 = rhs.begin(), iend = end(); it1 != iend; ++it1, ++it2)
+        {
+            if (!(*it1 < *it2))
+                return false;
+        }
+        return true;
+    }
+
+    const eterm<Alloc>& operator[] (size_t idx) const {
+        BOOST_ASSERT(m_blob && idx < size());
         return m_blob->data()[idx];
     }
 
-    eterm<Alloc>& operator[] (int idx) {
-        BOOST_ASSERT(m_blob && (size_t)idx < size());
+    eterm<Alloc>& operator[] (size_t idx) {
+        BOOST_ASSERT(m_blob && idx < size());
         return m_blob->data()[idx];
     }
 
@@ -180,12 +213,12 @@ public:
         return result;
     }
 
-    void encode(char* buf, int& idx, size_t size) const;
+    void encode(char* buf, uintptr_t& idx, size_t size) const;
 
     bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const;
 
     bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding) const;
-    
+
     std::ostream& dump(std::ostream& out, const varbind<Alloc>* vars = NULL) const;
 
     template <class T1>
@@ -315,17 +348,17 @@ public:
 };
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 namespace std {
 
     template <class Alloc>
-    ostream& operator<< (ostream& out, const EIXX_NAMESPACE::marshal::tuple<Alloc>& a) {
+    ostream& operator<< (ostream& out, const eixx::marshal::tuple<Alloc>& a) {
         return a.dump(out);
     }
 
 } // namespace std
 
-#include <eixx/marshal/tuple.ipp>
+#include <eixx/marshal/tuple.hxx>
 
 #endif // _IMPL_TUPLE_HPP_

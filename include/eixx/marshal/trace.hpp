@@ -12,23 +12,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -41,7 +37,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/marshal/tuple.hpp>
 #include <ei.h>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
 /// Represents trace operations performed on the <tt>trace<Alloc>::tracer</tt>.
@@ -59,7 +55,7 @@ class trace : protected tuple<Alloc> {
     /// Increment the serial number. This method is not atomic.
     void inc_serial() { long n = serial(); (*this)[4] = n; (*this)[2] = n+1; }
     
-    void check_clock(uint32_t& clock) {
+    void check_clock(long& clock) {
         long n = serial(); if (n > clock) (*this)[4] = clock = n;
     }
 
@@ -81,7 +77,7 @@ public:
     }
 
     /// Decode the pid from a binary buffer.
-    trace(const char* buf, int& idx, size_t a_size, const Alloc& a_alloc = Alloc())
+    trace(const char* buf, uintptr_t& idx, size_t a_size, const Alloc& a_alloc = Alloc())
         : tuple<Alloc>(buf, idx, a_size, a_alloc)
     {
         if (size() != 5 || (*this)[0].type() != LONG
@@ -89,7 +85,7 @@ public:
                         || (*this)[2].type() != LONG
                         || (*this)[3].type() != PID
                         || (*this)[4].type() != LONG)
-            throw err_decode_exception("Invalid trace token type!");
+            throw err_decode_exception("Invalid trace token type!", idx);
     }
 
     trace(const trace& rhs) : tuple<Alloc>(rhs) {}
@@ -123,16 +119,16 @@ public:
     }
 
     bool operator< (const trace<Alloc>& rhs) const {
-        return static_cast<const tuple<Alloc>&>(this) < static_cast<const tuple<Alloc>&>(rhs);
+        return *static_cast<const tuple<Alloc>*>(this) < static_cast<const tuple<Alloc>&>(rhs);
     }
 
     size_t encode_size() const { return tuple<Alloc>::encode_size(); }
 
-    void encode(char* buf, int& idx, size_t size) const {
+    void encode(char* buf, uintptr_t& idx, size_t size) const {
         tuple<Alloc>::encode(buf, idx, size);
     }
 
-    std::ostream& dump(std::ostream& out, const varbind<Alloc>* binding=NULL) const {
+    std::ostream& dump(std::ostream& out, const varbind<Alloc>* =NULL) const {
         return out << *static_cast<const tuple<Alloc>*>(this);
     }
 
@@ -140,7 +136,7 @@ public:
     static trace<Alloc>* tracer(trace_op op, const trace<Alloc>* token = NULL) {
         static trace<Alloc> save_token;
         static bool     tracing = false;
-        static uint32_t clock   = 0;
+        static long clock   = 0;
 
         switch (op) {
             case TRACE_OFF: tracing = false; break;
@@ -163,11 +159,11 @@ public:
 };
 
 } //namespace marshal
-} //namespace EIXX_NAMESPACE
+} //namespace eixx
 
 namespace std {
     template <typename Alloc>
-    ostream& operator<< (ostream& out, const EIXX_NAMESPACE::marshal::trace<Alloc>& a) {
+    ostream& operator<< (ostream& out, const eixx::marshal::trace<Alloc>& a) {
         return a.dump(out);
     }
 

@@ -1,5 +1,5 @@
 //----------------------------------------------------------------------------
-/// \file  tuple.ipp
+/// \file  tuple.hxx
 //----------------------------------------------------------------------------
 /// \brief Implementation of tuple's member functions.
 //----------------------------------------------------------------------------
@@ -9,23 +9,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -37,17 +33,20 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/marshal/visit_subst.hpp>
 #include <ei.h>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
 template <class Alloc>
-tuple<Alloc>::tuple(const char* buf, int& idx, size_t size, const Alloc& a_alloc)
+tuple<Alloc>::tuple(const char* buf, uintptr_t& idx, size_t size, const Alloc& a_alloc)
 {
-    int arity;
-    if (ei_decode_tuple_header(buf, &idx, &arity) < 0)
+    BOOST_ASSERT(idx <= INT_MAX);
+    int n;
+    if (ei_decode_tuple_header(buf, (int*)&idx, &n) < 0)
         err_decode_exception("Error decoding tuple header", idx);
+
+    size_t arity = static_cast<size_t>(n);
     m_blob = new blob<eterm<Alloc>, Alloc>(arity+1, a_alloc);
-    for (int i=0; i < arity; i++) {
+    for (size_t i=0; i < arity; i++) {
         new (&m_blob->data()[i]) eterm<Alloc>(buf, idx, size, a_alloc);
     }
     set_init_size(arity);
@@ -55,10 +54,14 @@ tuple<Alloc>::tuple(const char* buf, int& idx, size_t size, const Alloc& a_alloc
 }
 
 template <class Alloc>
-void tuple<Alloc>::encode(char* buf, int& idx, size_t size) const
+void tuple<Alloc>::encode(char* buf, uintptr_t& idx, size_t size) const
 {
     BOOST_ASSERT(initialized());
-    ei_encode_tuple_header(buf, &idx, this->size());
+    BOOST_ASSERT(idx <= INT_MAX);
+    size_t arity = this->size();
+    if (arity > INT_MAX)
+        throw err_encode_exception("LARGE_TUPLE_EXT arity exceeds maximum supported");
+    ei_encode_tuple_header(buf, (int*)&idx, (int)arity);
     for(const_iterator it = begin(), iend=end(); it != iend; ++it) {
         visit_eterm_encoder visitor(buf, idx, size);
         visitor.apply_visitor(*it);
@@ -125,4 +128,4 @@ std::ostream& tuple<Alloc>::dump(std::ostream& out, const varbind<Alloc>* vars) 
 }
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx

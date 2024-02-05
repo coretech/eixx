@@ -10,23 +10,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -41,7 +37,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/eterm_exception.hpp>
 #include <ei.h>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
 template <class Alloc> class varbind;
@@ -60,12 +56,20 @@ protected:
 public:
     typedef const char* const_iterator;
 
-    string() : m_blob(NULL) {}
+    static const string& null() { static string s; return s; }
+
+    string() : m_blob(nullptr) {}
+
+    string(size_t a_sz, const Alloc& a = Alloc())
+        : m_blob(new blob<char, Alloc>(a_sz+1, a))
+    {
+        m_blob->data()[m_blob->size()-1] = '\0';
+    }
 
     string(const char* s, const Alloc& a = Alloc()) {
         BOOST_ASSERT(s);
         if (!s[0]) {
-            m_blob = NULL;
+            m_blob = nullptr;
             return;
         }
         m_blob = new blob<char, Alloc>(strlen(s)+1, a);
@@ -74,7 +78,7 @@ public:
     }
     string(const std::string& s, const Alloc& a = Alloc()) {
         if (s.empty()) {
-            m_blob = NULL;
+            m_blob = nullptr;
             return;
         }
         m_blob = new blob<char, Alloc>(s.size()+1, a);
@@ -83,7 +87,7 @@ public:
     }
     string(const char* s, size_t n, const Alloc& a = Alloc()) {
         if (n == 0) {
-            m_blob = NULL;
+            m_blob = nullptr;
             return;
         }
         m_blob = new blob<char, Alloc>(n+1, a);
@@ -97,16 +101,32 @@ public:
         if (m_blob) m_blob->inc_rc();
     }
 
-    string(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc());
+    string(string<Alloc>&& s) : m_blob(s.m_blob) {
+        s.m_blob = nullptr;
+    }
+
+    string(const char* buf, uintptr_t& idx, size_t size, const Alloc& a_alloc = Alloc());
 
     ~string() {
         release();
     }
 
-    void operator= (const string<Alloc>& s) {
-        release(); 
-        m_blob = s.m_blob;
-        if (m_blob) m_blob->inc_rc();
+    string<Alloc>& operator= (const string<Alloc>& s) {
+        if (this != &s) {
+            release();
+            m_blob = s.m_blob;
+            if (m_blob) m_blob->inc_rc();
+        }
+        return *this;
+    }
+
+    string<Alloc>& operator= (string<Alloc>&& s) {
+        if (this != &s) {
+            release();
+            m_blob = s.m_blob;
+            s.m_blob = nullptr;
+        }
+        return *this;
     }
 
     void operator= (const std::string& s) {
@@ -123,6 +143,7 @@ public:
 
     const char* c_str()  const { return m_blob ? m_blob->data() : ""; }
     size_t      size()   const { return m_blob ? m_blob->size()-1 : 0; }
+    std::string to_str() const { return m_blob ? std::string(m_blob->data(), m_blob->size()-1) : ""; }
     size_t      length() const { return size(); }
     bool        empty()  const { return c_str()[0] == '\0'; }
 
@@ -142,17 +163,19 @@ public:
     }
 
     /// Tests if this string is equal to the content of the binary buffer \a rhs.
-    template <int N>
+    template <size_t N>
     bool equal(const char (&rhs)[N]) const {
         int i = N > 0 && rhs[N-1] == '\0' ? -1 : 0;
         return strncmp(c_str(), rhs, size()+i) == 0;
     }
 
     /// Tests if this string is equal to the content of the binary buffer \a rhs.
-    template <int N>
+    template <size_t N>
     bool equal(const uint8_t (&rhs)[N]) const {
-        int i = N > 0 && rhs[N-1] == '\0' ? -1 : 0;
-        return strncmp(c_str(), (const char*)rhs, size()+i) == 0;
+        size_t sz = size();
+        if (sz > 0 && N > 0 && rhs[N-1] == '\0')
+            sz -= 1;
+        return strncmp(c_str(), (const char*)rhs, sz) == 0;
     }
 
     /** Size of binary buffer needed to hold the encoded string. */
@@ -161,30 +184,41 @@ public:
         return n == 0 ? 1 : n + (n <= 0xffff ? 3 : 5+n+1);
     }
 
-    void encode(char* buf, int& idx, size_t size) const {
-        ei_encode_string_len(buf, &idx, c_str(), length());
+    void encode(char* buf, uintptr_t& idx, size_t) const {
+        BOOST_ASSERT(idx <= INT_MAX);
+        size_t len = size();
+        if (len > INT_MAX)
+            throw err_encode_exception("STRING_EXT length exceeds maximum");
+        ei_encode_string_len(buf, (int*)&idx, c_str(), (int)len);
     }
 
-    std::ostream& dump(std::ostream& out, const varbind<Alloc>* binding=NULL) const {
+    template <typename Stream>
+    Stream& to_binary_string(Stream& out) {
+        return eixx::to_binary_string(out, c_str(), size());
+    }
+
+    std::string to_binary_string() const { return eixx::to_binary_string(c_str(), size()); }
+
+    std::ostream& dump(std::ostream& out, const varbind<Alloc>* =NULL) const {
         return out << *this;
     }
 };
 
 template <typename Alloc>
 static std::string to_binary_string(const string<Alloc>& a) {
-    return to_binary_string(a.c_str(), a.size());
+    return a.to_binary_string();
 }
 
 template <class Alloc>
-string<Alloc>::string(const char* buf, int& idx, size_t size, const Alloc& a_alloc)
+string<Alloc>::string(const char* buf, uintptr_t& idx, [[maybe_unused]] size_t size, const Alloc& a_alloc)
 {
-    const char *s = buf + idx;
+    const char *s  = buf + idx;
     const char *s0 = s;
-    int etype = get8(s);
+    uint8_t    tag = get8(s);
 
-    switch (etype) {
+    switch (tag) {
         case ERL_STRING_EXT: {
-            int len = get16be(s);
+            uint16_t len = get16be(s);
             if (len == 0)
                 m_blob = NULL;
             else {
@@ -201,15 +235,15 @@ string<Alloc>::string(const char* buf, int& idx, size_t size, const Alloc& a_all
              * but we decode as much as we can, exiting early if we run into a
              * non-character in the list.
              */
-            int len = get32be(s);
+            uint32_t len = get32be(s);
             if (len == 0)
                 m_blob = NULL;
             else {
                 m_blob = new blob<char, Alloc>(len+1, a_alloc);
-                for (int i=0; i<len; i++) {
-                    if ((etype = get8(s)) != ERL_SMALL_INTEGER_EXT)
-                        throw err_decode_exception("Error decoding string", s+i-s0);
-                    m_blob->data()[i] = get8(s);
+                for (uint32_t i=0; i<len; i++) {
+                    if ((tag = get8(s)) != ERL_SMALL_INTEGER_EXT)
+                        throw err_decode_exception("Error decoding string", static_cast<uintptr_t>(s - s0)+i);
+                    m_blob->data()[i] = static_cast<char>(get8(s));
                 }
                 m_blob->data()[len] = '\0';
             }
@@ -220,33 +254,33 @@ string<Alloc>::string(const char* buf, int& idx, size_t size, const Alloc& a_all
             break;
 
         default:
-            throw err_decode_exception("Error decoding string type", etype);
+            throw err_decode_exception("Error decoding string's type", idx, tag);
     }
-    idx += s-s0;
+    idx += static_cast<uintptr_t>(s - s0);
 }
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 namespace std {
 
     template <typename Alloc>
-    ostream& operator<< (ostream& out, const EIXX_NAMESPACE::marshal::string<Alloc>& s) {
+    ostream& operator<< (ostream& out, const eixx::marshal::string<Alloc>& s) {
         return out << '"' << s.c_str() << '"';
     }
 
     template <typename Alloc>
-    bool operator== (const std::string& lhs, const EIXX_NAMESPACE::marshal::string<Alloc>& rhs) {
+    bool operator== (const std::string& lhs, const eixx::marshal::string<Alloc>& rhs) {
         return lhs == rhs.c_str();
     }
 
     template <typename Alloc>
-    bool operator== (const EIXX_NAMESPACE::marshal::string<Alloc>& lhs, const std::string& rhs) {
-        return rhs == rhs.c_str();
+    bool operator== (const eixx::marshal::string<Alloc>& lhs, const std::string& rhs) {
+        return lhs == rhs.c_str();
     }
 
     template <typename Alloc>
-    bool operator== (const EIXX_NAMESPACE::marshal::string<Alloc>& lhs, const char* rhs) {
+    bool operator== (const eixx::marshal::string<Alloc>& lhs, const char* rhs) {
         return strcmp(rhs, lhs.c_str(), lhs.size()) == 0;
     }
 

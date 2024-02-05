@@ -1,5 +1,5 @@
 //----------------------------------------------------------------------------
-/// \file transport_otp_connection.ipp
+/// \file transport_otp_connection.hxx
 //----------------------------------------------------------------------------
 // Copyright (c) 2010 Serge Aleynikov <saleyn@gmail.com>
 // Created: 2010-09-11
@@ -7,23 +7,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (c) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -39,16 +35,16 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/marshal/string.hpp>
 //#include <misc/eiext.h>                 // see erl_interface/src
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace connect {
 
-using EIXX_NAMESPACE::marshal::trace;
+using eixx::marshal::trace;
 
 template <class Handler, class Alloc>
 const size_t connection<Handler, Alloc>::s_header_size = 4;
 
 template <class Handler, class Alloc>
-const char   connection<Handler, Alloc>::s_header_magic = 132;
+const char   connection<Handler, Alloc>::s_header_magic = static_cast<char>(132);
 
 template <class Handler, class Alloc>
 const eterm<Alloc> connection<Handler, Alloc>::s_null_cookie;
@@ -59,15 +55,15 @@ typename connection<Handler, Alloc>::pointer
 connection<Handler, Alloc>::create(
     boost::asio::io_service& a_svc,
     Handler*            a_h,
-    const std::string&  a_this_node,
-    const std::string&  a_node,
-    const std::string&  a_cookie,
+    uint32_t            a_this_creation,
+    atom                a_this_node,
+    atom                a_node,
+    atom                a_cookie,
     const Alloc&        a_alloc)
 {
-    if (a_this_node.find('@') == std::string::npos)
-        THROW_RUNTIME_ERROR("Invalid name of this node: " << a_this_node);
+    BOOST_ASSERT(a_this_node.to_string().find('@') != std::string::npos);
 
-    std::string addr(a_node);
+    std::string addr(a_node.to_string());
 
     connection_type con_type = parse_connection_type(addr);
 
@@ -91,13 +87,13 @@ connection<Handler, Alloc>::create(
         default:   THROW_RUNTIME_ERROR("Not implemented! (proto=" << con_type << ')');
     }
 
-    p->connect(a_this_node, addr, a_cookie);
+    p->connect(a_this_creation, a_this_node, a_node, a_cookie);
     return p;
 }
 
 template <class Handler, class Alloc>
 connection_type
-connection<Handler, Alloc>::parse_connection_type(std::string& s) throw(std::runtime_error)
+connection<Handler, Alloc>::parse_connection_type(std::string& s)
 {
     size_t pos = s.find("://", 0);
     if (pos == std::string::npos)
@@ -177,7 +173,7 @@ handle_write(const boost::system::error_code& err)
         return;
     }
 
-    if (unlikely(err)) {
+    if (unlikely(bool(err))) {
         if (verbose() >= VERBOSE_TRACE) {
             std::stringstream s;
             s << "connection::handle_write(" << err.value() << ')';
@@ -186,16 +182,13 @@ handle_write(const boost::system::error_code& err)
         // We use operation_aborted as a user-initiated connection reset,
         // therefore check to substitute the error since bytes_transferred == 0
         // means a connection loss.
-        boost::system::error_code e =
-            err == boost::asio::error::operation_aborted
+        boost::system::error_code e = err == boost::asio::error::operation_aborted
             ? boost::asio::error::not_connected : err;
         stop(e);
         return;
     }
-    for (std::deque<boost::asio::const_buffer>::iterator
-                it  = m_out_msg_queue[writing_queue()].begin(),
-                end = m_out_msg_queue[writing_queue()].end();
-            it != end; ++it) {
+    auto& q = m_out_msg_queue[writing_queue()];
+    for (auto it  = q.begin(), end = q.end(); it != end; ++it) {
         const char* p = boost::asio::buffer_cast<const char*>(*it);
         // Don't forget to adjust for the header magic byte.
         BOOST_ASSERT(*(p - 1) == s_header_magic);
@@ -231,7 +224,7 @@ handle_read(const boost::system::error_code& err, size_t bytes_transferred)
                 "Connection aborted - exiting connection::handle_read");
         }
         return;
-    } else if (unlikely(err)) {
+    } else if (unlikely(bool(err))) {
         // We use operation_aborted as a user-initiated connection reset,
         // therefore check to substitute the error since bytes_transferred == 0
         // means a connection loss.
@@ -254,7 +247,7 @@ handle_read(const boost::system::error_code& err, size_t bytes_transferred)
             // next message.
             m_packet_size = cast_be<uint32_t>(m_rd_ptr);
             if (m_packet_size > m_rd_buf.capacity()-s_header_size) {
-                size_t begin_offset = m_rd_ptr - &m_rd_buf[0];
+                size_t begin_offset = static_cast<uintptr_t>(m_rd_ptr - &m_rd_buf[0]);
                 m_rd_buf.reserve(begin_offset + m_packet_size + s_header_size);
                 m_rd_ptr = &m_rd_buf[0] + begin_offset;
                 m_rd_end = m_rd_ptr + len;
@@ -262,7 +255,7 @@ handle_read(const boost::system::error_code& err, size_t bytes_transferred)
         }
     }
 
-    long need_bytes = m_packet_size + s_header_size - rd_length();
+    auto need_bytes = m_packet_size + s_header_size - rd_length();
 
     /*
     if (unlikely(verbose() >= VERBOSE_WIRE))
@@ -272,7 +265,7 @@ handle_read(const boost::system::error_code& err, size_t bytes_transferred)
                   << ", length=" << rd_length()
                   << ", rd_buf.size=" << m_rd_buf.capacity()
                   << ", got_header=" << (m_got_header ? "true" : "false")
-                  << ", " << to_binary_string(m_rd_ptr, std::min(rd_length(), 15lu)) << "..."
+                  << ", " << to_binary_string(m_rd_ptr, std::min(rd_length(), 25lu)) << "..."
                   << std::endl;
     */
 
@@ -282,7 +275,6 @@ handle_read(const boost::system::error_code& err, size_t bytes_transferred)
         m_in_msg_count++;
 
         try {
-            /*
             if (unlikely(verbose() >= VERBOSE_WIRE)) {
                 std::cout << " MsgCnt=" << m_in_msg_count
                           << ", pkt_size=" << m_packet_size << ", need=" << need_bytes
@@ -295,7 +287,6 @@ handle_read(const boost::system::error_code& err, size_t bytes_transferred)
                 to_binary_string(
                     std::cout << "client <- server: ", m_rd_ptr, m_packet_size) << std::endl;
             }
-            */
 
             // Decode the packet into a message and dispatch it.
             process_message(m_rd_ptr, m_packet_size);
@@ -306,7 +297,7 @@ handle_read(const boost::system::error_code& err, size_t bytes_transferred)
                 to_binary_string(m_rd_ptr, m_packet_size));
         }
         m_rd_ptr     += m_packet_size;
-        m_got_header  = rd_length() >= (long)s_header_size;
+        m_got_header  = rd_length() >= long(s_header_size);
         if (m_got_header) {
             m_packet_size = cast_be<uint32_t>(m_rd_ptr);
             need_bytes    = m_packet_size + s_header_size - rd_length();
@@ -321,9 +312,9 @@ handle_read(const boost::system::error_code& err, size_t bytes_transferred)
         need_bytes    = m_packet_size;
     } else if ((m_rd_ptr - (&m_rd_buf[0] + s_header_size)) > 0) {
         // Crunch the buffer by copying leftover bytes to the beginning of the buffer.
-        const size_t len = m_rd_end - m_rd_ptr;
+        const size_t len = static_cast<uintptr_t>(m_rd_end - m_rd_ptr);
         char* begin = &m_rd_buf[0];
-        if (likely((size_t)(m_rd_ptr - begin) < len))
+        if (likely(static_cast<uintptr_t>(m_rd_ptr - begin) < len))
             memcpy(begin, m_rd_ptr, len);
         else
             memmove(begin, m_rd_ptr, len);
@@ -347,9 +338,9 @@ handle_read(const boost::system::error_code& err, size_t bytes_transferred)
     boost::asio::mutable_buffers_1 buffers(m_rd_end, rd_capacity());
     async_read(
         buffers, boost::asio::transfer_at_least(need_bytes),
-        boost::bind(&connection<Handler, Alloc>::handle_read, this->shared_from_this(),
-            boost::asio::placeholders::error,
-            boost::asio::placeholders::bytes_transferred));
+        std::bind(&connection<Handler, Alloc>::handle_read, this->shared_from_this(),
+            std::placeholders::_1,
+            std::placeholders::_2));
 }
 
 /// Decode distributed Erlang message.  The message must be fully
@@ -357,14 +348,14 @@ handle_read(const boost::system::error_code& err, size_t bytes_transferred)
 /// Note: TICK message is represented by msg type = 0, in this case \a a_cntrl_msg
 /// and \a a_msg are invalid.
 /// @return message type
+/// @throws err_decode_exception
 template <class Handler, class Alloc>
 int connection<Handler, Alloc>::
-transport_msg_decode(const char *mbuf, int len, transport_msg<Alloc>& a_tm)
-    throw(err_decode_exception)
+transport_msg_decode(const char *mbuf, size_t len, transport_msg<Alloc>& a_tm)
 {
     const char* s = mbuf;
     int version;
-    int index = 0;
+    uintptr_t index = 0;
 
     if (unlikely(len == 0)) // This is TICK message
         return ERL_TICK;
@@ -372,29 +363,32 @@ transport_msg_decode(const char *mbuf, int len, transport_msg<Alloc>& a_tm)
     /* now decode header */
     /* pass-through, version, control tuple header, control message type */
     if (unlikely(get8(s) != ERL_PASS_THROUGH)) {
-        int n = len < 65 ? len : 64;
-        std::string s = std::string("Missing pass-throgh flag in message")
+        size_t n = len < 65 ? len : 64;
+        std::string str = std::string("Missing pass-through flag in message")
                       + to_binary_string(mbuf, n);
-        throw err_decode_exception(s, len);
+        throw err_decode_exception(str, index, (long)len);
     }
 
-    if (unlikely(ei_decode_version(s,&index,&version) || version != ERL_VERSION_MAGIC))
-        throw err_decode_exception("Invalid control message magic number", version);
+    if (unlikely(ei_decode_version(s, (int*)&index, &version) || version != ERL_VERSION_MAGIC))
+        throw err_decode_exception("Invalid control message magic number", index, version);
 
     tuple<Alloc> cntrl(s, index, len, m_allocator);
 
-    int msgtype = cntrl[0].to_long();
+    long t = cntrl[0].to_long();
+    BOOST_ASSERT(t <= INT_MAX);
+    int msgtype = (int)t;
 
     if (unlikely(msgtype <= ERL_TICK) || unlikely(msgtype > ERL_MONITOR_P_EXIT))
-        throw err_decode_exception("Invalid message type", msgtype);
+        throw err_decode_exception("Invalid message type", index, msgtype);
 
     static const uint32_t types_with_payload = 1 << ERL_SEND
                                              | 1 << ERL_REG_SEND
                                              | 1 << ERL_SEND_TT
                                              | 1 << ERL_REG_SEND_TT;
     if (likely((1 << msgtype) & types_with_payload)) {
-        if (unlikely(ei_decode_version(s,&index,&version)) || unlikely((version != ERL_VERSION_MAGIC)))
-            throw err_decode_exception("Invalid message magic number", version);
+        BOOST_ASSERT(index <= INT_MAX);
+        if (unlikely(ei_decode_version(s, (int*)&index, &version)) || unlikely((version != ERL_VERSION_MAGIC)))
+            throw err_decode_exception("Invalid message magic number", index, version);
 
         eterm<Alloc> msg(s, index, len, m_allocator);
         a_tm.set(msgtype, cntrl, &msg);
@@ -464,32 +458,34 @@ send(const transport_msg<Alloc>& a_msg)
     bool   l_has_msg= a_msg.has_msg();
     size_t cntrl_sz = l_cntrl.encode_size(0, true);
     size_t msg_sz   = l_has_msg ? a_msg.msg().encode_size(0, true) : 0;
-    size_t len      = cntrl_sz + msg_sz + 1 /*passthrough*/ + 4 /*len*/;
-    char*  data     = allocate(len);
+    size_t sz       = cntrl_sz + msg_sz + 1 /*passthrough*/ + 4 /*len*/;
+    char*  data     = allocate(sz);
     char*  s        = data;
-    put32be(s, len-4);
+    BOOST_ASSERT(sz-4 <= UINT32_MAX);
+    uint32_t len = (uint32_t)sz - 4;
+    put32be(s, len);
     *s++ = ERL_PASS_THROUGH;
     l_cntrl.encode(s, cntrl_sz, 0, true);
     if (l_has_msg)
         a_msg.msg().encode(s + cntrl_sz, msg_sz, 0, true);
 
     if (unlikely(verbose() >= VERBOSE_MESSAGE)) {
-        std::stringstream s;
-        s << "SEND cntrl="
-          << l_cntrl.to_string() << (l_has_msg ? ", msg=" : "")
-          << (l_has_msg ? a_msg.msg().to_string() : std::string(""));
-        m_handler->report_status(REPORT_INFO, s.str());
+        std::stringstream ss;
+        ss << "SEND cntrl="
+           << l_cntrl.to_string() << (l_has_msg ? ", msg=" : "")
+           << (l_has_msg ? a_msg.msg().to_string() : std::string(""));
+        m_handler->report_status(REPORT_INFO, ss.str());
     }
     //if (unlikely(verbose() >= VERBOSE_WIRE))
-    //    std::cout << "SEND " << len << " bytes " << to_binary_string(data, len) << std::endl;
+    //    std::cout << "SEND " << sz << " bytes " << to_binary_string(data, sz) << std::endl;
 
-    boost::asio::const_buffer b(data, len);
+    boost::asio::const_buffer b(data, sz);
     m_io_service.post(
-        boost::bind(&connection<Handler, Alloc>::do_write, this->shared_from_this(), b));
+        std::bind(&connection<Handler, Alloc>::do_write, this->shared_from_this(), b));
 }
 
 } // namespace connect
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 #endif // _EIXX_TRANSPORT_OTP_CONNECTION_IPP_
 

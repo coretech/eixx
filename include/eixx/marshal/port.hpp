@@ -10,23 +10,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -37,8 +33,9 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <boost/static_assert.hpp>
 #include <eixx/eterm_exception.hpp>
 #include <eixx/marshal/atom.hpp>
+#include <eixx/marshal/config.hpp>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
 /**
@@ -49,11 +46,11 @@ namespace marshal {
 template <class Alloc>
 class port {
     struct port_blob {
-        uint8_t creation;
-        int     id;
-        atom    node;
+        uint32_t creation;
+        uint64_t id;
+        atom     node;
 
-        port_blob(const atom& a_node, int a_id, uint8_t a_cre)
+        port_blob(const atom& a_node, uint64_t a_id, uint32_t a_cre)
             : creation(a_cre), id(a_id), node(a_node)
         {}
     };
@@ -66,14 +63,21 @@ class port {
     }
 
     // Must only be called from constructor!
-    void init(const atom& node, int id, uint8_t creation, const Alloc& alloc) 
+    void init(const atom& node, uint64_t id, uint32_t creation, 
+              const Alloc& alloc)
     {
         m_blob = new blob<port_blob, Alloc>(1, alloc);
-        new (m_blob->data()) port_blob(node, id & 0x0fffffff, creation & 0x03);
+        new (m_blob->data()) port_blob(node, id, creation);
     }
 
-    port() {}
 public:
+    static const port<Alloc> null;
+
+    /// When true - include 'Creation' in printing to string/stream
+    static bool display_creation() { return config::display_creation(); }
+
+    port() : m_blob(nullptr) {}
+
     /**
      * Create an Erlang port from its components.
      * If node string size is greater than MAX_NODE_LENGTH or = 0,
@@ -85,7 +89,7 @@ public:
      * 2 bits will be used.
      * @throw err_bad_argument if node is empty or greater than MAX_NODE_LENGTH
      **/
-    port(const char* node, const int id, const int creation, const Alloc& a_alloc = Alloc())
+    port(const char* node, const uint64_t id, const uint32_t creation, const Alloc& a_alloc = Alloc())
     {
         size_t n = strlen(node);
         detail::check_node_length(n);
@@ -93,7 +97,7 @@ public:
         init(l_node, id, creation, a_alloc);
     }
 
-    port(const atom& node, const int id, const int creation, const Alloc& a_alloc = Alloc())
+    port(const atom& node, const uint64_t id, const uint32_t creation, const Alloc& a_alloc = Alloc())
     {
         detail::check_node_length(node.size());
         init(node, id, creation, a_alloc);
@@ -107,31 +111,45 @@ public:
      * @param size is the size of the \a buf buffer.
      * @param a_alloc is the allocator to use.
      */
-    port(const char *buf, int& idx, size_t size, const Alloc& a_alloc = Alloc());
+    port(const char *buf, uintptr_t& idx, size_t size, const Alloc& a_alloc = Alloc());
 
-    port(const port& rhs) : m_blob(rhs.m_blob) { m_blob->inc_rc(); }
+    port(const port& rhs) : m_blob(rhs.m_blob) { if (m_blob) m_blob->inc_rc(); }
+    port(port&& rhs)      : m_blob(rhs.m_blob) { rhs.m_blob = nullptr; }
 
     ~port() { release(); }
 
-    void operator= (const port& rhs) { release(); m_blob = rhs.m_blob; m_blob->inc_rc(); }
+    port& operator= (const port& rhs) {
+        if (this != &rhs) {
+            release(); m_blob = rhs.m_blob;
+            if (m_blob) m_blob->inc_rc();
+        }
+        return *this;
+    }
+
+    port& operator= (port&& rhs) {
+        if (this != &rhs) {
+            release(); m_blob = rhs.m_blob; rhs.m_blob = nullptr;
+        }
+        return *this;
+    }
 
     /**
      * Get the node name from the PORT.
      * @return the node name from the PORT.
      **/
-    const atom& node() const { return m_blob->data()->node; }
+    atom node() const { return m_blob ? m_blob->data()->node : atom::null(); }
 
     /**
      * Get the id number from the PORT.
      * @return the id number from the PORT.
      **/
-    int id() const { return m_blob->data()->id; }
+    uint64_t id() const { return m_blob ? m_blob->data()->id : 0; }
 
     /**
      * Get the creation number from the PORT.
      * @return the creation number from the PORT.
      **/
-    int creation() const { return m_blob->data()->creation; }
+    uint32_t creation() const { return m_blob ? m_blob->data()->creation : 0; }
 
     bool operator== (const port<Alloc>& t) const {
         return id() == t.id() && node() == t.node() && creation() == t.creation();
@@ -149,27 +167,38 @@ public:
         return false;
     }
 
-    size_t encode_size() const { return 9 + node().size(); }
+    size_t encode_size() const {
+        return id() > 0x0fffffff ? 16 :
+            #if defined(ERL_V4_PORT_EXT) || defined(ERL_NEW_PORT_EXT)
+                12
+            #else
+                9
+            #endif
+            + node().size();
+    }
 
-    void encode(char* buf, int& idx, size_t size) const;
+    void encode(char* buf, uintptr_t& idx, size_t size) const;
 
-    std::ostream& dump(std::ostream& out, const varbind<Alloc>* binding=NULL) const {
+    std::ostream& dump(std::ostream& out, const varbind<Alloc>* =NULL) const {
         return out << *this;
     }
 };
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 namespace std {
     template <typename Alloc>
-    ostream& operator<< (ostream& out, const EIXX_NAMESPACE::marshal::port<Alloc>& a) {
-        return out << "#Port<" << a.node() << "." << a.id() << ">";
+    ostream& operator<< (ostream& out, const eixx::marshal::port<Alloc>& a) {
+        out << "#Port<" << a.node() << "." << a.id();
+        if (a.creation() > 0 && a.display_creation())
+            out << ',' << a.creation();
+        return out << '>';
     }
 
 } // namespace std
 
-#include <eixx/marshal/port.ipp>
+#include <eixx/marshal/port.hxx>
 
 #endif // _IMPL_PORT_HPP_
 

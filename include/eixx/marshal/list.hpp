@@ -10,35 +10,31 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
-#ifndef _IMPL_LIST_HPP_
-#define _IMPL_LIST_HPP_
+#pragma once
 
 #include <list>
 #include <boost/static_assert.hpp>
 #include <eixx/marshal/defaults.hpp>
 #include <eixx/marshal/visit_encode_size.hpp>
+#include <initializer_list>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
 template <typename Alloc>
@@ -55,16 +51,38 @@ private:
     typedef alloc_base<cons_t, Alloc> base_t;
 
     struct header_t {
+        header_t()          {}
+        header_t(std::nullptr_t)
+            : initialized(true)
+            , alloc_size (0)
+            , size       (0)
+            , tail       (nullptr)
+        {}
         bool            initialized;
-        unsigned int    alloc_size;
-        unsigned int    size;
+        size_t    alloc_size;
+        size_t          size;
         cons_t*         tail;
+        #pragma GCC diagnostic push
+        #pragma GCC diagnostic ignored "-Wpedantic"
         cons_t          head[0];
+        #pragma GCC diagnostic pop
     };
 
     typedef blob<char, Alloc> blob_t;
 
     blob_t* m_blob;
+
+    /// Returns a pointer to a singleton empty list
+    static blob_t* empty_list() {
+        auto creator = []() {
+            auto p = new blob_t(sizeof(header_t));
+            auto h = reinterpret_cast<header_t*>(p->data());
+            new (h) header_t(nullptr);
+            return p;
+        };
+        static std::unique_ptr<blob_t> s_empty(creator());
+        return s_empty.get();
+    }
 
     header_t* header() {
         BOOST_ASSERT(m_blob); return reinterpret_cast<header_t*>(m_blob->data());
@@ -77,13 +95,13 @@ private:
     cons_t*       tail()          { return header()->tail; }
 
     void release() {
-        if (!m_blob)
+        if (!m_blob || m_blob == empty_list())
            return;
         if (m_blob->release(false)) {
             header_t* l_header = header();
             if (l_header->size > 0) {
                 for (cons_t* p = head(); p; p = p->next)
-                    p->node.~eterm<Alloc>();
+                    p->node.~eterm();
                 // If there were any allocations after the original 
                 // construction of the list head descriptor, deallocate
                 // all the following cons.
@@ -103,9 +121,9 @@ public:
     class iterator;
     typedef const iterator const_iterator;
 
-    iterator begin()             { iterator it(empty() ? NULL : head()); return it; }
-    iterator end()               { return iterator::end(); }
-    
+    iterator       begin()       { iterator it(empty() ? NULL : head()); return it; }
+    iterator       end()         { return iterator::end(); }
+
     const_iterator begin() const { const_iterator it(empty() ? NULL : head()); return it; }
     const_iterator end()   const { return iterator::end(); }
 
@@ -114,39 +132,66 @@ public:
         , m_blob(NULL)
     {}
 
+    /// Construct an NIL list (initialized list with no elements)
+    explicit list(std::nullptr_t) : m_blob(empty_list()) {}
+
+    /// Construct a list with a given estimated size.
+    ///
+    /// When a_estimated_size is 0, an empty initialized list is created. Otherwise,
+    /// the list is not initialized.
     explicit list(int a_estimated_size, const Alloc& alloc = Alloc())
-        : base_t(alloc)
-        , m_blob(new blob_t(sizeof(header_t) + a_estimated_size*sizeof(cons_t), alloc))
+        : list((size_t)a_estimated_size, alloc)
     {
-        header_t* l_header      = header();
-        l_header->initialized   = a_estimated_size == 0;
-        l_header->alloc_size    = a_estimated_size;
-        l_header->size          = 0;
-        l_header->tail          = NULL;
+        if (a_estimated_size < 0)
+            throw err_bad_argument("List too short");
     }
 
-    list(const list<Alloc>& a)
-        : base_t(a.get_allocator()), m_blob(a.m_blob)
+    /// Construct a list with a given estimated size.
+    ///
+    /// When a_estimated_size is 0, an empty initialized list is created. Otherwise,
+    /// the list is not initialized.
+    explicit list(size_t a_estimated_size, const Alloc& alloc = Alloc())
+        : base_t(alloc)
     {
+        if (a_estimated_size == 0)
+            m_blob = empty_list();
+        else {
+            m_blob = new blob_t(sizeof(header_t) + a_estimated_size*sizeof(cons_t), alloc);
+            header_t* hdr      = header();
+            hdr->initialized   = a_estimated_size == 0;
+            hdr->alloc_size    = a_estimated_size;
+            hdr->size          = 0;
+            hdr->tail          = NULL;
+        }
+    }
+
+    list(const list<Alloc>& a) : base_t(a.get_allocator()), m_blob(a.m_blob) {
         BOOST_ASSERT(a.initialized());
         if (m_blob) m_blob->inc_rc();
     } 
 
-    explicit list(const cons_t* a_head, int a_len = -1, const Alloc& alloc = Alloc());
+    list(list<Alloc>&& a) : base_t(a.get_allocator()), m_blob(a.m_blob) {
+        a.m_blob = nullptr;
+    }
 
-    template <int N>
-    list(const eterm<Alloc> (&items)[N], const Alloc& alloc = Alloc());
+    explicit list(const cons_t* a_head, size_t a_len = 0, const Alloc& alloc = Alloc());
 
-    list(const eterm<Alloc> items[], size_t a_size, const Alloc& alloc = Alloc());
+    template <size_t N>
+    list(const eterm<Alloc> (&items)[N], const Alloc& alloc = Alloc())
+        : list(items, N, alloc) {}
+
+    list(const eterm<Alloc>* items, size_t a_size, const Alloc& alloc = Alloc())
+        : base_t(alloc) { init(items, a_size, alloc); }
+
+    list(std::initializer_list<eterm<Alloc>> items, const Alloc& alloc = Alloc())
+        : list(items.begin(), items.size(), alloc) {}
 
     /**
      * Decode the list from a binary buffer.
      */
-    explicit list(const char* buf, int& idx, size_t size, const Alloc& a_alloc = Alloc());
+    explicit list(const char* buf, uintptr_t& idx, size_t size, const Alloc& a_alloc = Alloc());
 
-    ~list() {
-        release();
-    }
+    ~list() { release(); }
 
     /**
      * Add a term to list. Tuples added must be fully filled
@@ -164,25 +209,36 @@ public:
      * Closes the list.
      * A list must be closed before it can be copied or included into other terms.
      */
-    void    close() { header()->initialized = true; }
+    void    close() {
+        if (!m_blob || m_blob == empty_list()) return;
+        header()->initialized = true;
+    }
 
     /// Return list length. This method has O(1) complexity.
-    size_t  length()        const { return m_blob ? header()->size : 0; }
+    size_t  length()        const { return  m_blob ?  header()->size :  0; }
     bool    empty()         const { return !m_blob || header()->size == 0; }
-    bool    initialized()   const { return m_blob && header()->initialized; }
+    bool    initialized()   const { return  m_blob && header()->initialized; }
 
     /// Return pointer to the N'th element in the list. This method has
     /// O(N) complexity.
     const eterm<Alloc>& nth(size_t n) const {
         if (n > length())
             throw err_bad_argument("Index out of bounds", n);
-        const_iterator it = begin(), endit = end();
         size_t i = 0;
-        for(; it != endit, i < n; ++it, ++i);
+        auto it = begin();
+        for(auto endit = end(); it != endit && i < n; ++it, ++i);
         return *it;
     }
 
     list<Alloc> tail(size_t idx) const;
+
+    list<Alloc>& operator= (const list<Alloc>& rhs) {
+        BOOST_ASSERT(rhs.initialized());
+        release();
+        m_blob = rhs.m_blob;
+        if (m_blob) m_blob->inc_rc();
+        return *this;
+    }
 
     bool operator== (const list<Alloc>& rhs) const {
         const_iterator it1  = begin(), it2  = rhs.begin(),
@@ -192,6 +248,16 @@ public:
                 return false;
         }
         return it1 == end1 && it2 == end2;
+    }
+
+    bool operator< (const list<Alloc>& rhs) const {
+        const_iterator it1  = begin(), it2  = rhs.begin(),
+                       end1 = end(),   end2 = rhs.end();
+        for(; it1 != end1 && it2 != end2; ++it1, ++it2) {
+            if (!(*it1 < *it2))
+                return false;
+        }
+        return it1 == end1 && it2 != end2;
     }
 
     size_t encode_size() const {
@@ -207,12 +273,12 @@ public:
         return result;
     }
 
-    void encode(char* buf, int& idx, size_t size) const;
+    void encode(char* buf, uintptr_t& idx, size_t size) const;
 
     bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const;
 
     bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding) const;
-    
+
     std::ostream& dump(std::ostream& out, const varbind<Alloc>* vars = NULL) const;
 
     static list<Alloc> make(const Alloc& a = Alloc()) {
@@ -322,17 +388,15 @@ public:
 };
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 namespace std {
 
     template <class Alloc>
-    ostream& operator<< (ostream& out, const EIXX_NAMESPACE::marshal::list<Alloc>& a) {
+    ostream& operator<< (ostream& out, const eixx::marshal::list<Alloc>& a) {
         return a.dump(out);
     }
 
 } // namespace std
 
-#include <eixx/marshal/list.ipp>
-
-#endif // _IMPL_LIST_HPP_
+#include <eixx/marshal/list.hxx>

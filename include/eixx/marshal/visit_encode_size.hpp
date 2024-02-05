@@ -9,23 +9,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -35,22 +31,22 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/marshal/visit.hpp>
 #include <ei.h>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace marshal {
 
 template <typename Alloc>
 struct visit_eterm_encode_size_calc
     : public static_visitor<visit_eterm_encode_size_calc<Alloc>, size_t> {
 
-    size_t operator()(bool   a) const { int n = 0; ei_encode_boolean(NULL, &n, a); return n; }
-    size_t operator()(double a) const { int n = 0; ei_encode_double(NULL, &n, a); return n; }
-    size_t operator()(long   a) const { int n = 0; ei_encode_longlong(NULL, &n, a); return n; }
+    size_t operator()(bool   a) const { return 2 + (a ? 4 : 5); }
+    size_t operator()(double  ) const { return 9; }
+    size_t operator()(long   a) const { int n = 0; ei_encode_longlong(NULL, &n, a); return static_cast<size_t>(n); }
 
     template <typename T>
     size_t operator()(const T& a) const { return a.encode_size(); }
 };
 
-} // namespace EIXX_NAMESPACE
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
+} // namespace eixx
 
 #endif // _IMPL_VISIT_ENCODE_SIZE_HPP_

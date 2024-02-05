@@ -10,33 +10,28 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) Library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (C) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
 #ifndef _EIXX_MARSHAL_ETERM_HPP_
 #define _EIXX_MARSHAL_ETERM_HPP_
 
-#include <boost/type_traits/is_same.hpp>
-#include <boost/type_traits/remove_reference.hpp>
-#include <boost/type_traits/remove_const.hpp>
-#include <boost/noncopyable.hpp>
+#include <type_traits>
+
+#include <initializer_list>
 
 #include <eixx/marshal/defaults.hpp> // Must be included before any <eixx/impl/*>
 
@@ -48,29 +43,33 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <eixx/marshal/ref.hpp>
 #include <eixx/marshal/tuple.hpp>
 #include <eixx/marshal/list.hpp>
+#include <eixx/marshal/map.hpp>
 #include <eixx/marshal/trace.hpp>
 #include <eixx/marshal/var.hpp>
 #include <eixx/marshal/varbind.hpp>
 #include <eixx/marshal/eterm_match.hpp>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
+    using marshal::config;
+
 namespace marshal {
 
 namespace {
     template <typename T, typename Alloc> struct enum_type;
-    template <typename Alloc> struct enum_type<long,   Alloc>        { typedef long   type; };
-    template <typename Alloc> struct enum_type<double, Alloc>        { typedef double type; };
-    template <typename Alloc> struct enum_type<bool,   Alloc>        { typedef bool   type; };
-    template <typename Alloc> struct enum_type<atom,   Alloc>        { typedef atom   type; };
-    template <typename Alloc> struct enum_type<string<Alloc>, Alloc> { typedef string<Alloc> type; };
-    template <typename Alloc> struct enum_type<binary<Alloc>, Alloc> { typedef binary<Alloc> type; };
-    template <typename Alloc> struct enum_type<epid<Alloc>,   Alloc> { typedef epid<Alloc>   type; };
-    template <typename Alloc> struct enum_type<port<Alloc>,   Alloc> { typedef port<Alloc>   type; };
-    template <typename Alloc> struct enum_type<ref<Alloc>,    Alloc> { typedef ref<Alloc>    type; };
-    template <typename Alloc> struct enum_type<var<Alloc>,    Alloc> { typedef var<Alloc>    type; };
-    template <typename Alloc> struct enum_type<tuple<Alloc>,  Alloc> { typedef tuple<Alloc>  type; };
-    template <typename Alloc> struct enum_type<list<Alloc>,   Alloc> { typedef list<Alloc>   type; };
-    template <typename Alloc> struct enum_type<trace<Alloc>,  Alloc> { typedef trace<Alloc>  type; };
+    template <typename Alloc> struct enum_type<long,   Alloc>        { using type = long         ; };
+    template <typename Alloc> struct enum_type<double, Alloc>        { using type = double       ; };
+    template <typename Alloc> struct enum_type<bool,   Alloc>        { using type = bool         ; };
+    template <typename Alloc> struct enum_type<atom,   Alloc>        { using type = atom         ; };
+    template <typename Alloc> struct enum_type<string<Alloc>, Alloc> { using type = string<Alloc>; };
+    template <typename Alloc> struct enum_type<binary<Alloc>, Alloc> { using type = binary<Alloc>; };
+    template <typename Alloc> struct enum_type<epid<Alloc>,   Alloc> { using type = epid<Alloc>  ; };
+    template <typename Alloc> struct enum_type<port<Alloc>,   Alloc> { using type = port<Alloc>  ; };
+    template <typename Alloc> struct enum_type<ref<Alloc>,    Alloc> { using type = ref<Alloc>   ; };
+    template <typename Alloc> struct enum_type<var,           Alloc> { using type = var          ; };
+    template <typename Alloc> struct enum_type<tuple<Alloc>,  Alloc> { using type = tuple<Alloc> ; };
+    template <typename Alloc> struct enum_type<list<Alloc>,   Alloc> { using type = list<Alloc>  ; };
+    template <typename Alloc> struct enum_type<map<Alloc>,    Alloc> { using type = map<Alloc>   ; };
+    template <typename Alloc> struct enum_type<trace<Alloc>,  Alloc> { using type = trace<Alloc> ; };
 }
 
 /**
@@ -129,84 +128,177 @@ namespace {
 template <typename Alloc>
 class eterm {
     eterm_type m_type;
-
+public:
     union vartype {
-        long        i;
-        double      d;
-        bool        b;
-        // Since a union cannot have types that have constructors,
-        // we allocate space for a pointer to a compound type, and using
-        // that space to store the value of the compound type.
-        // Additionally, we ensure that the size of each compound type
-        // is sizeof(void*).  Therefore it's safe to store the actual
-        // value of a compound type in this union, so the pointer serves
-        // as the value placeholder.
-        // This trick allows us to have minimum overhead related to
+        double          d;
+        bool            b;
+        long            i;
+        atom            a;
+        var             v;
+        string<Alloc>   s;
+        binary<Alloc> bin;
+        epid<Alloc>   pid;
+        port<Alloc>   prt;
+        ref<Alloc>      r;
+        tuple<Alloc>    t;
+        list<Alloc>     l;
+        map<Alloc>      m;
+        trace<Alloc>  trc;
+
+        uint64_t value; // this is for ease of copying
+
+        // We ensure that the size of each compound type
+        // is sizeof(uint64_t).  Therefore it's safe to store the actual
+        // value of a compound type in this union, so the uint64 integer
+        // acts as the value placeholder.
+        // This allows us to have the minimum overhead related to
         // copying terms as for simple types it merely involves copying
-        // 16 bytes (64-bit platform) and for compound types it means copying
+        // 16 bytes and for compound types it means copying
         // the same 16 bytes and in some cases
         // incrementing compound type's reference count.
         // This approach was tested against boost::variant<> and was found
         // to be several times more efficient.
-        void*  p; /* Space for any compound reference-counted value with constructor */
 
-        template <typename T>
-        operator T& () { return  reinterpret_cast<T&>(p); }
+        vartype(int     x)  : i(x) {}
+        vartype(long    x)  : i(x) {}
+        vartype(double  x)  : d(x) {}
+        vartype(bool    x)  : b(x) {}
+        vartype(atom    x)  : a(x) {}
+        vartype(var     x)  : v(x) {}
+        vartype(const string<Alloc>& x) : s(x)   {}
+        vartype(const binary<Alloc>& x) : bin(x) {}
+        vartype(const epid<Alloc>&   x) : pid(x) {}
+        vartype(const port<Alloc>&   x) : prt(x) {}
+        vartype(const ref<Alloc>&    x) :   r(x) {}
+        vartype(const tuple<Alloc>&  x) :   t(x) {}
+        vartype(const list<Alloc>&   x) :   l(x) {}
+        vartype(const map<Alloc>&    x) :   m(x) {}
+        vartype(const trace<Alloc>&  x) : trc(x) {}
 
-        template <typename T>
-        operator const T& () const { return  reinterpret_cast<const T&>(p); }
+        vartype(string<Alloc>&& x) :   s(std::move(x)) {}
+        vartype(binary<Alloc>&& x) : bin(std::move(x)) {}
+        vartype(epid<Alloc>&&   x) : pid(std::move(x)) {}
+        vartype(port<Alloc>&&   x) : prt(std::move(x)) {}
+        vartype(ref<Alloc>&&    x) :   r(std::move(x)) {}
+        vartype(tuple<Alloc>&&  x) :   t(std::move(x)) {}
+        vartype(list<Alloc>&&   x) :   l(std::move(x)) {}
+        vartype(map<Alloc>&&    x) :   m(std::move(x)) {}
+        vartype(trace<Alloc>&&  x) : trc(std::move(x)) {}
+
+        vartype() : i(0) {}
+        ~vartype() {}
+
+        void reset() { i = 0; }
     } vt;
 
-    void check(eterm_type tp) const { if (unlikely(m_type != tp)) throw err_wrong_type(m_type, tp); }
+    static_assert(sizeof(vartype) == sizeof(uint64_t), "Invalid class size!");
+
+    void check(eterm_type tp) const { if (unlikely(m_type != tp)) throw err_wrong_type(tp, m_type); }
 
     /**
      * Decode a term from the Erlang external binary format.
+     * @throw err_decode_exception
      */
-    void decode(const char* a_buf, int& idx, size_t a_size, const Alloc& a_alloc);
+    void decode(const char* a_buf, uintptr_t& idx, size_t a_size, const Alloc& a_alloc);
 
     long&           get(long*)                  { check(LONG);   return vt.i; }
     double&         get(double*)                { check(DOUBLE); return vt.d; }
     bool&           get(bool*)                  { check(BOOL);   return vt.b; }
-    atom&           get(const atom*)            { check(ATOM);   return vt; }
-    string<Alloc>&  get(const string<Alloc>*)   { check(STRING); return vt; }
-    binary<Alloc>&  get(const binary<Alloc>*)   { check(BINARY); return vt; }
-    epid<Alloc>&    get(const epid<Alloc>*)     { check(PID);    return vt; }
-    port<Alloc>&    get(const port<Alloc>*)     { check(PORT);   return vt; }
-    ref<Alloc>&     get(const ref<Alloc>*)      { check(REF);    return vt; }
-    var<Alloc>&     get(const var<Alloc>*)      { check(VAR);    return vt; }
-    tuple<Alloc>&   get(const tuple<Alloc>*)    { check(TUPLE);  return vt; }
-    list<Alloc>&    get(const list<Alloc>*)     { check(LIST);   return vt; }
-    trace<Alloc>&   get(const trace<Alloc>*)    { check(TRACE);  return vt; }
+    atom&           get(const atom*)            { check(ATOM);   return vt.a; }
+    var&            get(const var*)             { check(VAR);    return vt.v; }
+    string<Alloc>&  get(const string<Alloc>*)   { check(STRING); return vt.s; }
+    binary<Alloc>&  get(const binary<Alloc>*)   { check(BINARY); return vt.bin; }
+    epid<Alloc>&    get(const epid<Alloc>*)     { check(PID);    return vt.pid; }
+    port<Alloc>&    get(const port<Alloc>*)     { check(PORT);   return vt.prt; }
+    ref<Alloc>&     get(const ref<Alloc>*)      { check(REF);    return vt.r; }
+    tuple<Alloc>&   get(const tuple<Alloc>*)    { check(TUPLE);  return vt.t; }
+    list<Alloc>&    get(const list<Alloc>*)     { check(LIST);   return vt.l; }
+    map<Alloc>&     get(const map<Alloc>*)      { check(MAP);    return vt.m; }
+    trace<Alloc>&   get(const trace<Alloc>*)    { check(TRACE);  return vt.trc; }
 
     template <typename T, typename A> friend T& get(eterm<A>& t);
 
+    void reset() { m_type = UNDEFINED; vt.reset(); }
+
+    void replace(eterm* a) {
+        m_type    = a->m_type;
+        vt.value  = a->vt.value;
+        a->reset();
+    }
+
+    /// @throw err_format_exception
+    static eterm<Alloc> format(const Alloc& a_alloc, const char** fmt, va_list* args);
+
+    /// @throw err_format_exception
+    static void format(const Alloc& a_alloc, atom& m, atom& f, eterm<Alloc>& args,
+        const char** fmt, va_list* pa);
 public:
     eterm_type  type()        const { return m_type; }
     const char* type_string() const;
 
-    eterm() : m_type(UNDEFINED)                     { vt.p = NULL; }
+    eterm() : m_type(UNDEFINED) {
+        static_assert(sizeof(eterm<Alloc>)==2*sizeof(uint64_t), "Invalid size!");
+    }
 
-    eterm(unsigned int  a) : m_type(LONG)           { vt.i = a; }
-    eterm(unsigned long a) : m_type(LONG)           { vt.i = a; }
-    eterm(int    a) : m_type(LONG)                  { vt.i = a; }
+    eterm(unsigned int  a)          : m_type(LONG),  vt((int)a)  {}
+    eterm(unsigned long a)          : m_type(LONG),  vt((long)a) {}
+    eterm(int    a)                 : m_type(LONG),  vt(a) {}
 
-    eterm(long   a) : m_type(LONG)                  { vt.i = a; }
-    eterm(double a) : m_type(DOUBLE)                { vt.d = a; }
-    eterm(bool   a) : m_type(BOOL)                  { vt.b = a; }
+    eterm(long   a)                 : m_type(LONG),  vt(a) {}
+    eterm(double a)                 : m_type(DOUBLE),vt(a) {}
+    eterm(bool   a)                 : m_type(BOOL),  vt(a) {}
+    eterm(atom   a)                 : m_type(ATOM),  vt(a) {}
+    eterm(var    a)                 : m_type(VAR),   vt(a) {}
     eterm(const char* a, const Alloc& alloc = Alloc())
-        : m_type(STRING)  { new (&vt.p) string<Alloc>(a, alloc); }
+        : m_type(STRING), vt(string<Alloc>(a, alloc)) {}
     eterm(const std::string& a, const Alloc& alloc = Alloc())
-        : m_type(STRING)  { new (&vt.p) string<Alloc>(a.c_str(), a.size(), alloc); }
-    eterm(const atom& a)           : m_type(ATOM)   { new (&vt.p) atom(a);  }
-    eterm(const string<Alloc>& a)  : m_type(STRING) { new (&vt.p) string<Alloc>(a);}
-    eterm(const binary<Alloc>& a)  : m_type(BINARY) { new (&vt.p) binary<Alloc>(a);}
-    eterm(const epid<Alloc>& a)    : m_type(PID)    { new (&vt.p) epid<Alloc>(a);  }
-    eterm(const port<Alloc>& a)    : m_type(PORT)   { new (&vt.p) port<Alloc>(a);  }
-    eterm(const ref<Alloc>& a)     : m_type(REF)    { new (&vt.p) ref<Alloc>(a);   }
-    eterm(const var<Alloc>& a)     : m_type(VAR)    { new (&vt.p) var<Alloc>(a);   }
-    eterm(const tuple<Alloc>& a)   : m_type(TUPLE)  { new (&vt.p) tuple<Alloc>(a); }
-    eterm(const list<Alloc>&  a)   : m_type(LIST)   { new (&vt.p) list<Alloc>(a);  }
-    eterm(const trace<Alloc>& a)   : m_type(TRACE)  { new (&vt.p) trace<Alloc>(a); }
+        : m_type(STRING), vt(string<Alloc>(a.c_str(), a.size(), alloc)) {}
+    eterm(const string<Alloc>& a)  : m_type(STRING), vt(a) {}
+    eterm(const binary<Alloc>& a)  : m_type(BINARY), vt(a) {}
+    eterm(const epid<Alloc>&   a)  : m_type(PID),    vt(a) {}
+    eterm(const port<Alloc>&   a)  : m_type(PORT),   vt(a) {}
+    eterm(const ref<Alloc>&    a)  : m_type(REF),    vt(a) {}
+    eterm(const tuple<Alloc>&  a)  : m_type(TUPLE),  vt(a) {}
+    eterm(const list<Alloc>&   a)  : m_type(LIST),   vt(a) {}
+    eterm(const map<Alloc>&    a)  : m_type(MAP),    vt(a) {}
+    eterm(const trace<Alloc>&  a)  : m_type(TRACE),  vt(a) {}
+
+    eterm(string<Alloc>&&      a)  : m_type(STRING), vt(std::move(a)) {}
+    eterm(binary<Alloc>&&      a)  : m_type(BINARY), vt(std::move(a)) {}
+    eterm(epid<Alloc>&&        a)  : m_type(PID),    vt(std::move(a)) {}
+    eterm(port<Alloc>&&        a)  : m_type(PORT),   vt(std::move(a)) {}
+    eterm(ref<Alloc>&&         a)  : m_type(REF),    vt(std::move(a)) {}
+    eterm(tuple<Alloc>&&       a)  : m_type(TUPLE),  vt(std::move(a)) {}
+    eterm(list<Alloc>&&        a)  : m_type(LIST),   vt(std::move(a)) {}
+    eterm(map<Alloc>&&         a)  : m_type(MAP),    vt(std::move(a)) {}
+    eterm(trace<Alloc>&&       a)  : m_type(TRACE),  vt(std::move(a)) {}
+
+    /**
+     * Copy construct a term from another one. The term is copied by value
+     * and for compound terms the storage is reference counted.
+     */
+    eterm(const eterm& a) : m_type(a.m_type) {
+        switch (m_type) {
+            case STRING:    { new (&vt.s)   string<Alloc>(a.vt.s);    break; }
+            case BINARY:    { new (&vt.bin) binary<Alloc>(a.vt.bin);  break; }
+            case PID:       { new (&vt.pid) epid<Alloc>(a.vt.pid);    break; }
+            case PORT:      { new (&vt.prt) port<Alloc>(a.vt.prt);    break; }
+            case REF:       { new (&vt.r)   ref<Alloc>(a.vt.r);       break; }
+            case TUPLE:     { new (&vt.t)   tuple<Alloc>(a.vt.t);     break; }
+            case LIST:      { new (&vt.l)   list<Alloc>(a.vt.l);      break; }
+            case MAP:       { new (&vt.m)   map<Alloc>(a.vt.m);       break; }
+            case TRACE:     { new (&vt.trc) trace<Alloc>(a.vt.trc);   break; }
+            default:
+                vt.value = a.vt.value;
+        }
+    }
+
+    /// Move constructor
+    eterm(eterm&& a) { replace(&a); }
+
+    /// Tuple initialization
+    eterm(std::initializer_list<eterm<Alloc>> items, const Alloc& alloc = Alloc())
+        : eterm(tuple<Alloc>(items, alloc)) {}
 
     /**
      * Construct a term by decoding it from the begining of
@@ -227,31 +319,8 @@ public:
      * @param a_size is the total size of the term stored in \a a_buf buffer.
      * @param a_alloc is the custom allocator.
      */
-    eterm(const char* a_buf, int& idx, size_t a_size, const Alloc& a_alloc = Alloc())
-        {
+    eterm(const char* a_buf, uintptr_t& idx, size_t a_size, const Alloc& a_alloc = Alloc()) {
         decode(a_buf, idx, a_size, a_alloc);
-    }
-
-    /**
-     * Copy construct a term from another one. The term is copied by value
-     * and for compound terms the storage is reference counted.
-     */
-    eterm(const eterm& a) : m_type(a.m_type) {
-        BOOST_STATIC_ASSERT(sizeof(vartype) == sizeof(void*));
-        switch (m_type) {
-            case ATOM:      { const atom&          t = a.vt; new (&vt.p) atom(t);            break; }
-            case STRING:    { const string<Alloc>& t = a.vt; new (&vt.p) string<Alloc>(t);   break; }
-            case BINARY:    { const binary<Alloc>& t = a.vt; new (&vt.p) binary<Alloc>(t);   break; }
-            case PID:       { const epid<Alloc>&   t = a.vt; new (&vt.p) epid<Alloc>(t);     break; }
-            case PORT:      { const port<Alloc>&   t = a.vt; new (&vt.p) port<Alloc>(t);     break; }
-            case REF:       { const ref<Alloc>&    t = a.vt; new (&vt.p) ref<Alloc>(t);      break; }
-            case VAR:       { const var<Alloc>&    t = a.vt; new (&vt.p) var<Alloc>(t);      break; }
-            case TUPLE:     { const tuple<Alloc>&  t = a.vt; new (&vt.p) tuple<Alloc>(t);    break; }
-            case LIST:      { const list<Alloc>&   t = a.vt; new (&vt.p) list<Alloc>(t);     break; }
-            case TRACE:     { const trace<Alloc>&  t = a.vt; new (&vt.p) trace<Alloc>(t);    break; }
-            default:
-                vt.i = a.vt.i;
-        }
     }
 
     /**
@@ -262,16 +331,15 @@ public:
     ~eterm() {
         switch (m_type) {
             //No need to destruct atoms - they are stored in global atom table.
-            //case ATOM:   {        atom& v = vt; v.~atom<Alloc>();   return; }
-            case STRING: { string<Alloc>& v = vt; v.~string<Alloc>(); return; }
-            case BINARY: { binary<Alloc>& v = vt; v.~binary<Alloc>(); return; }
-            case PID:    { epid<Alloc>&   v = vt; v.~epid<Alloc>();   return; }
-            case PORT:   { port<Alloc>&   v = vt; v.~port<Alloc>();   return; }
-            case REF:    { ref<Alloc>&    v = vt; v.~ref<Alloc>();    return; }
-            case VAR:    { var<Alloc>&    v = vt; v.~var<Alloc>();    return; }
-            case TUPLE:  { tuple<Alloc>&  v = vt; v.~tuple<Alloc>();  return; }
-            case LIST:   { list<Alloc>&   v = vt; v.~list<Alloc>();   return; }
-            case TRACE:  { trace<Alloc>&  v = vt; v.~trace<Alloc>();  return; }
+            case STRING: { vt.s.~string();   return; }
+            case BINARY: { vt.bin.~binary(); return; }
+            case PID:    { vt.pid.~epid();   return; }
+            case PORT:   { vt.prt.~port();   return; }
+            case REF:    { vt.r.~ref();      return; }
+            case TUPLE:  { vt.t.~tuple();    return; }
+            case LIST:   { vt.l.~list();     return; }
+            case MAP:    { vt.m.~map();      return; }
+            case TRACE:  { vt.trc.~trace();  return; }
             default: return;
         }
     }
@@ -285,11 +353,37 @@ public:
 
     // For some reason the template version above doesn't work for eterm<Alloc> parameter
     // so we overload it explicitely.
-    void operator= (const eterm<Alloc>& a) { if (this != &a) set(a); }
+    eterm& operator= (const eterm<Alloc>& a) { if (this != &a) set(a); return *this; }
+
+    /**
+     * Assign the value to this term.  If current term has been initialized,
+     * its old value is destructed.
+     */
+    eterm& operator= (eterm&& a) {
+        if (this != &a) {
+            if (m_type >= STRING) this->~eterm();
+            replace(&a);
+        }
+        return *this;
+    }
+
+    template <typename T>
+    void operator= (T&& a) {
+        if (m_type >= STRING) this->~eterm();
+        new (this) eterm(std::move(a));
+    }
+
+    /**
+     * Check that one term is less than the other. The function returns true
+     * if the term's type is less than the type of term "rhs" accorting to
+     * type_precedence() or if they have identical precedence, the check is
+     * made that the terms value is less than the value of the "rhs" term.
+     */
+    bool operator<(const eterm<Alloc>& rhs) const;
 
     template <typename T>
     void set(const T& a) {
-        if (m_type > ATOM)
+        if (m_type >= STRING)
             this->~eterm();
         new (this) eterm(a);
     }
@@ -313,9 +407,9 @@ public:
      */
     bool initialized() const {
         switch (type()) {
-            case TUPLE: { const tuple<Alloc>& v = vt; return v.initialized(); }
-            case LIST:  { const list<Alloc>&  v = vt; return v.initialized(); }
-            case TRACE: { const trace<Alloc>& v = vt; return v.initialized(); }
+            case TUPLE: { return vt.t.initialized(); }
+            case LIST:  { return vt.l.initialized(); }
+            case TRACE: { return vt.trc.initialized(); }
             default:    return true;
         }
     }
@@ -326,15 +420,45 @@ public:
      * they point to the same storage
      */
     bool equals(const eterm<Alloc>& rhs) const {
-        return m_type == rhs.m_type && vt.i == rhs.vt.i;
+        return m_type == rhs.m_type && vt.value == rhs.vt.value;
     }
 
     /**
      * Get the string representation of this eterm using a variable binding
      * @param binding Variable binding to use. It can be null.
      */
-    std::string to_string(size_t a_size_limit = std::string::npos,
-        const varbind<Alloc>* binding = NULL) const;
+    std::string to_string(size_t a_size_limit,
+                          const  varbind<Alloc>* binding = NULL) const;
+
+    // Separated into a separate function without default args for ease of gdb debugging
+    std::string to_string() const { return to_string(std::string::npos, NULL); }
+
+    // Return the term as a value of given type.
+    // NOTE: only integer | double | bool | string types are supported
+    template <typename T>
+    typename std::enable_if<std::is_same<T, double>::value, double>::type
+    get() const { return to_double(); }
+
+    template <typename T>
+    typename std::enable_if<std::is_same<T, bool>::value, bool>::type
+    get() const { return to_bool(); }
+
+    template <typename T>
+    typename std::enable_if<std::is_same<T, char>::value     ||
+                            std::is_same<T, short>::value    ||
+                            std::is_same<T, int>::value      ||
+                            std::is_same<T, long>::value     ||
+                            std::is_same<T, size_t>::value   ||
+                            std::is_same<T, uint8_t>::value  ||
+                            std::is_same<T, uint16_t>::value ||
+                            std::is_same<T, uint32_t>::value ||
+                            std::is_same<T, uint64_t>::value
+                            , T>::type
+    get() const { return T(to_long()); }
+
+    template <typename T>
+    typename std::enable_if<std::is_same<T, std::string>::value, std::string>::type
+    get() const { return to_str().to_str(); }
 
     // Convert a term to its underlying type.  Will throw an exception
     // when the underlying type doesn't correspond to the requested operation.
@@ -342,19 +466,45 @@ public:
     long                 to_long()   const { check(LONG);   return vt.i; }
     double               to_double() const { check(DOUBLE); return vt.d; }
     bool                 to_bool()   const { check(BOOL);   return vt.b; }
-    const atom&          to_atom()   const { check(ATOM);   return vt; }
-    const string<Alloc>& to_str()    const { check(STRING); return vt; }
-    const binary<Alloc>& to_binary() const { check(BINARY); return vt; }
-    const epid<Alloc>&   to_pid()    const { check(PID);    return vt; }
-    const port<Alloc>&   to_port()   const { check(PORT);   return vt; }
-    const ref<Alloc>&    to_ref()    const { check(REF);    return vt; }
-    const var<Alloc>&    to_var()    const { check(VAR);    return vt; }
-    const tuple<Alloc>&  to_tuple()  const { check(TUPLE);  return vt; }
-    tuple<Alloc>&        to_tuple()        { check(TUPLE);  return vt; }
-    const list<Alloc>&   to_list()   const { check(LIST);   return vt; }
-    list<Alloc>&         to_list()         { check(LIST);   return vt; }
-    const trace<Alloc>&  to_trace()  const { check(TRACE);  return vt; }
-    trace<Alloc>&        to_trace()        { check(TRACE);  return vt; }
+    const atom&          to_atom()   const { check(ATOM);   return vt.a; }
+    const var&           to_var()    const { check(VAR);    return vt.v; }
+    const string<Alloc>& to_str()    const {
+        if (m_type==LIST && vt.l.empty()) return string<Alloc>::null();
+        check(STRING); return vt.s;
+    }
+    const std::string    as_str()    const {
+        static const std::string s_null;
+        return m_type==LIST && vt.l.empty()
+             ? s_null
+             : m_type==STRING
+             ? vt.s.to_str() : to_string();
+    }
+    const binary<Alloc>& to_binary() const { check(BINARY); return vt.bin; }
+    const epid<Alloc>&   to_pid()    const { check(PID);    return vt.pid; }
+    const port<Alloc>&   to_port()   const { check(PORT);   return vt.prt; }
+    const ref<Alloc>&    to_ref()    const { check(REF);    return vt.r;   }
+    const tuple<Alloc>&  to_tuple()  const { check(TUPLE);  return vt.t;   }
+    tuple<Alloc>&        to_tuple()        { check(TUPLE);  return vt.t;   }
+    const list<Alloc>&   to_list()   const { check(LIST);   return vt.l;   }
+    list<Alloc>&         to_list()         { check(LIST);   return vt.l;   }
+    const map<Alloc>&    to_map()    const { check(MAP);    return vt.m;   }
+    map<Alloc>&          to_map()          { check(MAP);    return vt.m;   }
+    const trace<Alloc>&  to_trace()  const { check(TRACE);  return vt.trc; }
+    trace<Alloc>&        to_trace()        { check(TRACE);  return vt.trc; }
+
+    // Try to decode the value as a pair containing atom
+    // option name and any value
+    bool to_pair(atom& a_opt, eterm<Alloc>& a_val) {
+        static const eterm<Alloc> s_pair = eterm<Alloc>::format("{A::atom(), V}");
+        static const atom         s_am_opt = atom("A");
+        static const atom         s_am_val = atom("V");
+
+        varbind<Alloc> binding;
+        if (!match(s_pair, &binding)) return false;
+        a_opt =  binding[s_am_opt]->to_atom();
+        a_val = *binding[s_am_val];
+        return true;
+    }
 
     // Checks if database of the term is of given type
 
@@ -370,6 +520,7 @@ public:
     bool is_var()    const { return m_type == VAR   ; }
     bool is_tuple()  const { return m_type == TUPLE ; }
     bool is_list()   const { return m_type == LIST  ; }
+    bool is_map()    const { return m_type == MAP   ; }
     bool is_trace()  const { return m_type == TRACE ; }
 
     /**
@@ -378,10 +529,15 @@ public:
      * @param binding varbind to use in pattern matching.
      *  This binding will be updated with new bound variables if
      *  match succeeds.
+     * @throw  err_unbound_variable
      * @return true if matching succeeded or false if failed.
      */
-    bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding = NULL,
+    bool match(const eterm<Alloc>& pattern, varbind<Alloc>* binding,
                const Alloc& a_alloc = Alloc()) const;
+
+    // Separated into a separate function without default args for ease of gdb debugging
+    /// @throw  err_unbound_variable
+    bool match(const eterm<Alloc>& pattern) const { return match(pattern, NULL, Alloc()); }
 
     /**
      * Returns the equivalent without inner variables, using the
@@ -396,10 +552,16 @@ public:
      *  err_unbound_variable if there is a variable.
      * @returns a smart pointer to the new term with all eterm_var
      *    variables replaced by bound values.
-     * @throws err_invalid_term if the term is invalid
-     * @throws err_unbound_variable if a variable is unbound
+     * @throw err_invalid_term if the term is invalid
+     * @throw err_unbound_variable if a variable is unbound
      */
     bool subst(eterm<Alloc>& out, const varbind<Alloc>* binding) const;
+
+    /** Substitutes all variables in the term \a a.
+     * @throw err_invalid_term
+     * @throw err_unbound_variable
+    */
+    eterm<Alloc> apply(const varbind<Alloc>& binding) const;
 
     /**
      * This method finds the first unbound variable in a term for
@@ -439,6 +601,7 @@ public:
      * @param a_header_size is the size of packet header (valid values: 0, 1, 2, 4).
      * @param a_with_version indicates if a magic version byte
      *        needs to be encoded in the beginning of the buffer.
+     * @throw err_encode_exception
      */
     void encode(char* buf, size_t size,
         size_t a_header_size = DEF_HEADER_SIZE, bool a_with_version = true) const;
@@ -451,13 +614,13 @@ public:
      *
      * The set of valid format specifiers is as follows:
      * <ul>
-     *   <li> a  -  An atom
-     *   <li> s  -  A string
-     *   <li> i  -  An integer
-     *   <li> l  -  A long integer
-     *   <li> u  -  An unsigned long integer
-     *   <li> f  -  A double float
-     *   <li> w  -  A pointer to some arbitrary term passed as argument
+     *   <li>a  -  An atom</li>
+     *   <li>s  -  A string</li>
+     *   <li>i  -  An integer</li>
+     *   <li>l  -  A long integer</li>
+     *   <li>u  -  An unsigned long integer</li>
+     *   <li>f  -  A double float</li>
+     *   <li>w  -  A pointer to some arbitrary term passed as argument</li>
      * </ul>
      *
      * Example:
@@ -466,10 +629,19 @@ public:
      *          "alex", 40, eterm_t("1955-10-1"));
      * </code>
      * @return compiled eterm
-     * @throws err_format_exception
+     * @throw err_format_exception
      */
     static eterm<Alloc> format(const Alloc& a_alloc, const char* fmt, ...);
     static eterm<Alloc> format(const char* fmt, ...);
+
+    /**
+     * Same as format(a_alloc, fmt, ...), but parses string in format:
+     * <code>"Module:Function(Arg1, Arg2, ...)</code>
+     * @throw err_format_exception
+     */
+    static void format(const Alloc& a_alloc, atom& mod, atom& fun, eterm<Alloc>& args,
+                       const char* fmt, ...);
+    static void format(atom& mod, atom& fun, eterm<Alloc>& args, const char* fmt, ...);
 
     /// Cast a value to eterm. If t is of eterm type, it is returned as is.
     template <typename T>
@@ -485,21 +657,22 @@ public:
             case LONG:   return wrapper(v, vt.i);
             case DOUBLE: return wrapper(v, vt.d);
             case BOOL:   return wrapper(v, vt.b);
-            case ATOM:   { const atom&          t = vt; return wrapper(v, t); }
-            case STRING: { const string<Alloc>& t = vt; return wrapper(v, t); }
-            case BINARY: { const binary<Alloc>& t = vt; return wrapper(v, t); }
-            case PID:    { const epid<Alloc>&   t = vt; return wrapper(v, t); }
-            case PORT:   { const port<Alloc>&   t = vt; return wrapper(v, t); }
-            case REF:    { const ref<Alloc>&    t = vt; return wrapper(v, t); }
-            case VAR:    { const var<Alloc>&    t = vt; return wrapper(v, t); }
-            case TUPLE:  { const tuple<Alloc>&  t = vt; return wrapper(v, t); }
-            case LIST:   { const list<Alloc>&   t = vt; return wrapper(v, t); }
-            case TRACE:  { const trace<Alloc>&  t = vt; return wrapper(v, t); }
+            case ATOM:   return wrapper(v, vt.a);
+            case VAR:    return wrapper(v, vt.v);
+            case STRING: return wrapper(v, vt.s);
+            case BINARY: return wrapper(v, vt.bin);
+            case PID:    return wrapper(v, vt.pid);
+            case PORT:   return wrapper(v, vt.prt);
+            case REF:    return wrapper(v, vt.r);
+            case TUPLE:  return wrapper(v, vt.t);
+            case LIST:   return wrapper(v, vt.l);
+            case MAP:    return wrapper(v, vt.m);
+            case TRACE:  return wrapper(v, vt.trc);
             default: {
                 std::stringstream s; s << "Undefined term_type (" << m_type << ')';
                 throw err_invalid_term(s.str());
             }
-            BOOST_STATIC_ASSERT(MAX_ETERM_TYPE == 13);
+            BOOST_STATIC_ASSERT(MAX_ETERM_TYPE == 14);
         }
     }
 };
@@ -509,15 +682,15 @@ template <typename T, typename Alloc> T& get(eterm<Alloc>& t) {
 }
 
 } // namespace marshal
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 namespace std {
     template <typename Alloc>
-    ostream& operator<< (ostream& out, const EIXX_NAMESPACE::marshal::eterm<Alloc>& a_term) {
+    ostream& operator<< (ostream& out, const eixx::marshal::eterm<Alloc>& a_term) {
         return out << a_term.to_string();
     }
 }
 
-#include <eixx/marshal/eterm.ipp>
+#include <eixx/marshal/eterm.hxx>
 
 #endif

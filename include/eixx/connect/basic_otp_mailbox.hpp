@@ -11,23 +11,19 @@
 /*
 ***** BEGIN LICENSE BLOCK *****
 
-This file is part of the eixx (Erlang C++ Interface) library.
+Copyright 2010 Serge Aleynikov <saleyn at gmail dot com>
 
-Copyright (c) 2010 Serge Aleynikov <saleyn@gmail.com>
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-This library is free software; you can redistribute it and/or
-modify it under the terms of the GNU Lesser General Public
-License as published by the Free Software Foundation; either
-version 2.1 of the License, or (at your option) any later version.
+    http://www.apache.org/licenses/LICENSE-2.0
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-Lesser General Public License for more details.
-
-You should have received a copy of the GNU Lesser General Public
-License along with this library; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
 ***** END LICENSE BLOCK *****
 */
@@ -36,20 +32,26 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #define _EIXX_BASIC_OTP_MAILBOX_HPP_
 
 #include <boost/asio.hpp>
+#include <eixx/util/async_wait_timeout.hpp>
+#include <eixx/util/async_queue.hpp>
 #include <eixx/marshal/eterm.hpp>
 #include <eixx/connect/transport_msg.hpp>
 #include <eixx/connect/verbose.hpp>
-#include <eixx/util/async_wait_timeout.hpp>
+#include <eixx/eterm.hpp>
+#include <chrono>
 #include <list>
 #include <set>
 
-namespace EIXX_NAMESPACE {
+namespace eixx {
 namespace connect {
 
 template<typename Alloc, typename Mutex> class basic_otp_node;
 
-using EIXX_NAMESPACE::marshal::list;
-using EIXX_NAMESPACE::marshal::epid;
+using eixx::marshal::list;
+using eixx::marshal::epid;
+using eixx::marshal::tuple;
+using eixx::marshal::varbind;
+using namespace std::chrono;
 
 /**
  * Provides a simple mechanism for exchanging messages with Erlang
@@ -87,53 +89,57 @@ template <typename Alloc, typename Mutex>
 class basic_otp_mailbox
 {
 public:
-    typedef boost::shared_ptr<basic_otp_mailbox<Alloc, Mutex> > pointer;
+    using pointer = boost::shared_ptr<basic_otp_mailbox<Alloc, Mutex>>;
 
-    typedef boost::function<
-        void (basic_otp_mailbox<Alloc, Mutex>&, boost::system::error_code&)
+    typedef std::function<
+        bool (basic_otp_mailbox<Alloc, Mutex>&, transport_msg<Alloc>*&)
     > receive_handler_type;
 
-    typedef std::list<transport_msg<Alloc>*> queue_type;
+    typedef util::async_queue<transport_msg<Alloc>*, Alloc> queue_type;
+
+    template<typename A, typename M> friend class basic_otp_node;
+    template<typename T, typename A> friend struct util::async_queue;
+    template<typename A, typename M> friend class basic_otp_mailbox_registry;
+    template<typename _R> friend class std::function;
+    // template<typename _R, typename _F> friend class std::_Function_handler;
 
 private:
-    boost::asio::io_service&                m_io_service;
-    basic_otp_node<Alloc, Mutex>&           m_node;
-    epid<Alloc>                             m_self;
-    atom                                    m_name;
-    std::set<epid<Alloc> >                  m_links;
-    std::map<ref<Alloc>, epid<Alloc> >      m_monitors;
-    queue_type                              m_queue;
-    boost::asio::deadline_timer_ex          m_deadline_timer;
-    boost::function<
-        void (receive_handler_type f,
-              boost::system::error_code&)>  m_deadline_handler;
+    boost::asio::io_service&            m_io_service;
+    basic_otp_node<Alloc, Mutex>&       m_node;
+    epid<Alloc>                         m_self;
+    atom                                m_name;
+    std::set<epid<Alloc> >              m_links;
+    std::map<ref<Alloc>, epid<Alloc> >  m_monitors;
+    boost::shared_ptr<queue_type>       m_queue;
+    system_clock::time_point            m_time_freed;   // Cache time of this mbox
 
     void do_deliver(transport_msg<Alloc>* a_msg);
 
-    void do_on_deadline_timer(receive_handler_type f, boost::system::error_code& ec);
+    void name(const atom& a_name) { m_name = a_name; }
 
 public:
     basic_otp_mailbox(
             basic_otp_node<Alloc, Mutex>& a_node, const epid<Alloc>& a_self,
-            const atom& a_name = atom(), boost::asio::io_service* a_svc = NULL)
+            const atom& a_name = atom(), boost::asio::io_service* a_svc = NULL,
+            const Alloc& a_alloc = Alloc())
+        : basic_otp_mailbox(a_node, a_self, a_name, 255, a_svc, a_alloc)
+    {}
+
+    basic_otp_mailbox(
+            basic_otp_node<Alloc, Mutex>& a_node, const epid<Alloc>& a_self,
+            const atom& a_name = atom(), int a_queue_size = 255,
+            boost::asio::io_service* a_svc = NULL, const Alloc& a_alloc = Alloc())
         : m_io_service(a_svc ? *a_svc : a_node.io_service())
         , m_node(a_node), m_self(a_self)
         , m_name(a_name)
-        , m_deadline_timer(m_io_service)
+        , m_queue(new queue_type(m_io_service, a_queue_size, a_alloc))
     {}
 
-    ~basic_otp_mailbox() {
-        close();
-    }
+    ~basic_otp_mailbox() { close(); }
 
     /// @param a_reg_remove when true the mailbox's pid is removed from registry.
     ///          Only pass false when invoking from the registry on destruction.
-    void close(const eterm<Alloc>& a_reason = atom("normal"), bool a_reg_remove = true) {
-        m_deadline_timer.cancel();
-        if (a_reg_remove)
-            m_node.close_mailbox(this);
-        break_links(a_reason);
-    }
+    void close(const eterm<Alloc>& a_reason = am_normal, bool a_reg_remove = true);
 
     basic_otp_node<Alloc, Mutex>&   node()          const { return m_node;       }
     /// Pid associated with this mailbox.
@@ -142,44 +148,108 @@ public:
     const atom&                     name()          const { return m_name;       }
     boost::asio::io_service&        io_service()    const { return m_io_service; }
     /// Queue of pending received messages.
-    queue_type&                     queue()               { return m_queue;      }
+    //queue_type&                     queue()               { return m_queue;      }
     /// Indicates if mailbox doesn't have any pending messages
     bool                            empty()         const { return m_queue.empty(); }
 
-    void name(const atom& a_name) { m_name = a_name; }
+    /// Time when this mailbox was placed in the free list
+    system_clock::time_point        time_freed()    const { return m_time_freed; }
+
+    /// Register current mailbox under the given name
+    bool reg(const atom& a_name) { return m_node.register_mailbox(a_name, *this); }
 
     bool operator== (const basic_otp_mailbox& rhs) const { return self() == rhs.self(); }
     bool operator!= (const basic_otp_mailbox& rhs) const { return self() != rhs.self(); }
 
-    std::ostream& dump(std::ostream& out) const {
-        out << "#Mbox{pid=" << self();
-        if (m_name != atom()) out << ", name=" << m_name;
-        return out << '}';
-    }
+    /// Clear mailbox's queue of awaiting messages
+    void clear() { m_queue->reset(); }
 
+    /// Print pid and regname of the mailbox to the given stream
+    std::ostream& dump(std::ostream& out) const;
+
+    /*
     /// Find the first message in the mailbox matching a pattern.
     /// Return the message, and if \a a_binding is not NULL set the binding variables.
     /// The call is not thread-safe and should be evaluated in the thread running the
     /// mailbox node's service.
     transport_msg<Alloc>*
     match(const eterm<Alloc>& a_pattern, varbind* a_binding = NULL);
+    */
 
     /// Dequeue the next message from the mailbox.  The call is non-blocking and
     /// returns NULL if no messages are waiting.
     transport_msg<Alloc>* receive() {
-        if (m_queue.empty())
-            return NULL;
-        transport_msg<Alloc>* p = m_queue.front();
-        m_queue.pop_front();
-        return p;
+        transport_msg<Alloc>* m;
+        return m_queue->dequeue(m) ? m : nullptr;
+    }
+
+    /**
+     * Call a handler on asynchronous delivery of message(s).
+     *
+     * The call is non-blocking. If returns Upon timeout
+     * or delivery of a message to the mailbox the handler \a h will be
+     * invoked.  The handler must have a signature with three arguments:
+     * \code
+     * void handler(basic_otp_mailbox<Alloc, Mutex>& a_mailbox,
+     *              transport_msg<Alloc>*&           a_msg,
+     *              ::boost::system::error_code&     a_err);
+     * \endcode
+     * In case of timeout the error will be set to non-zero value
+     *
+     * @param h is the handler to call upon arrival of a message
+     * @param a_timeout is the timeout interval to wait for message (-1 = infinity)
+     * @param a_repeat_count is the number of messages to wait (-1 = infinite)
+     * @return true if the message was synchronously received
+     * @throws std::runtime_error
+     **/
+    template <typename OnReceive>
+    bool async_receive
+    (
+        const OnReceive& h,
+        std::chrono::milliseconds a_timeout = std::chrono::milliseconds(-1),
+        int a_repeat_count = 0
+    );
+
+    /**
+     * Cancel pending asynchronous receive operation
+     */
+    void cancel_async_receive() {
+        m_queue->cancel();
+    }
+
+    /**
+     * Wait for messages and perform pattern match when a message arives
+     *
+     * @param a_matcher is the pattern matcher to run
+     * @param a_on_timeout is the callback to be executed on timeout. It should
+     *   have the following signature
+     *   \code
+     *      void on_timeout(basic_otp_mailbox<Alloc,Mutex>&);
+     *   \endcode
+     * @param a_repeat_count number of messages to wait (-1 = infinite)
+     * @throws std::runtime_error
+     */
+    template <typename OnTimeout>
+    bool async_match
+    (
+        const marshal::eterm_pattern_matcher<Alloc>& a_matcher,
+        const OnTimeout& a_on_timeout,
+        std::chrono::milliseconds a_timeout = std::chrono::milliseconds(-1),
+        int a_repeat_count = 0
+    );
+
+    /// Deliver a message to this mailbox. The call is thread-safe.
+    void deliver(const transport_msg<Alloc>& a_msg) {
+        std::unique_ptr<transport_msg<Alloc>> p(new transport_msg<Alloc>(a_msg));
+        m_queue->enqueue(p.get());
+        p.release();
     }
 
     /// Deliver a message to this mailbox. The call is thread-safe.
-	void deliver(const transport_msg<Alloc>& a_msg) {
-        transport_msg<Alloc>* l_msg = new transport_msg<Alloc>(a_msg);
-        m_io_service.post(
-            boost::bind(
-                &basic_otp_mailbox<Alloc, Mutex>::do_deliver, this, l_msg));
+    void deliver(transport_msg<Alloc>&& a_msg) {
+        std::unique_ptr<transport_msg<Alloc>> p(new transport_msg<Alloc>(std::move(a_msg)));
+        m_queue->enqueue(p.get());
+        p.release();
     }
 
     /// Send a message \a a_msg to a pid \a a_to.
@@ -196,71 +266,89 @@ public:
     }
 
     /**
-     * Get a message from this mailbox. The call is non-blocking. Upon timeout
-     * or delivery of a message to the mailbox the handler \a h will be
-     * invoked.  The handler must have a signature with two arguments:
-     * \verbatim
-     * void handler(transport_msg& a_msg, boost::system::error_code& ec);
-     * \endverbatim
-     * In case of timeout the error will be set to: <tt>asio::error::timeout</tt>
-     * that is defined in <tt>eixx/util/async_wait_timeout.hpp</tt>.
-     **/
-    void async_receive(receive_handler_type h, long msec_timeout = -1)
-        throw (std::runtime_error);
-
-    /**
-     * Cancel pending asynchronous receive operation
-     */
-    void cancel_async_receive() {
-        m_deadline_timer.cancel();
-    }
-
-    /**
-     * Get a message from mailbox that matches the given pattern.
-     * It will block until an apropiate message arrives.
-     * @param pattern ErlTerm with pattern to check
-     * @param binding VariableBinding to use. It can be 0. Default = 0
-     * @return an pointer to the ErlTerm representing
-     * the body of the next message waiting in this mailbox.
-     * @exception EpiConnectionException if there was an connection error
-     */
-    //bool receive(const eterm<Alloc>& a_pattern, varbind<Alloc>* a_binding = NULL);
-
-    /**
      * Block until response for a RPC call arrives.
      * @return a pointer to ErlTerm containing the response
      * @exception EpiConnectionException if there was an connection error
-	 * @throw EpiBadRPC if the corresponding RPC was incorrect
+     * @throws EpiBadRPC if the corresponding RPC was incorrect
      */
     //bool receive_rpc_reply(const eterm<Alloc>& a_reply);
 
     /**
-	 * Send an RPC request to a remote Erlang node.
+     * Send an RPC request to a remote Erlang node.
      * @param node remote node where execute the funcion.
-	 * @param mod the name of the Erlang module containing the
-	 * function to be called.
-	 * @param fun the name of the function to call.
-	 * @param args a list of Erlang terms, to be used as arguments
-	 * to the function.
+     * @param mod the name of the Erlang module containing the
+     * function to be called.
+     * @param fun the name of the function to call.
+     * @param args a list of Erlang terms, to be used as arguments
+     * to the function.
      * @throws EpiBadArgument if function, module or nodename are too big
      * @throws EpiInvalidTerm if any of the args is invalid
-	 * @throws EpiEncodeException if encoding fails
+     * @throws EpiEncodeException if encoding fails
      * @throws EpiConnectionException if send fails
-	 */
+     */
     void send_rpc(const atom& a_node,
                   const atom& a_mod,
                   const atom& a_fun,
                   const list<Alloc>& args,
-                  const epid<Alloc>* gleader = NULL) {
+                  const epid<Alloc>* /*gleader*/ = NULL) {
         m_node.send_rpc(self(), a_node, a_mod, a_fun, args);
     }
 
-    /// Execute an equivalent of rpc:cast(...). Doesn't return any value.
+    /// Send an RPC request to a remote Erlang node.
+    void send_rpc(const atom&        a_node,
+                  const std::string& a_mod,
+                  const std::string& a_fun,
+                  const list<Alloc>& args,
+                  const epid<Alloc>* /*gleader*/ = NULL) {
+        m_node.send_rpc(self(), a_node, atom(a_mod), atom(a_fun), args);
+    }
+
+    /// Send an RPC request to a remote Erlang node.
+    void send_rpc(const atom&        a_node,
+                  const char*        a_mod,
+                  const char*        a_fun,
+                  const list<Alloc>& args,
+                  const epid<Alloc>* /*gleader*/ = NULL) {
+        m_node.send_rpc(self(), a_node, atom(a_mod), atom(a_fun), args);
+    }
+
+    /**
+     * Execute an equivalent of rpc:cast(...). Doesn't return any value.
+     * @throws err_bad_argument
+     * @throws err_no_process
+     * @throws err_connection
+     */
     void send_rpc_cast(const atom& a_node, const atom& a_mod,
             const atom& a_fun, const list<Alloc>& args,
             const epid<Alloc>* gleader = NULL)
-            throw (err_bad_argument, err_no_process, err_connection) {
+    {
         m_node.send_rpc_cast(self(), a_node, a_mod, a_fun, args, gleader);
+    }
+
+    /**
+     * Execute an equivalent of rpc:cast(...). Doesn't return any value.
+     * @throws err_bad_argument
+     * @throws err_no_process
+     * @throws err_connection
+     */
+    void send_rpc_cast(const atom& a_node, const std::string& a_mod,
+            const std::string& a_fun, const list<Alloc>& args,
+            const epid<Alloc>* gleader = NULL)
+    {
+        m_node.send_rpc_cast(self(), a_node, atom(a_mod), atom(a_fun), args, gleader);
+    }
+
+    /**
+     * Execute an equivalent of rpc:cast(...). Doesn't return any value.
+     * @throws err_bad_argument
+     * @throws err_no_process
+     * @throws err_connection
+     */
+    void send_rpc_cast(const atom& a_node, const char* a_mod,
+            const char* a_fun, const list<Alloc>& args,
+            const epid<Alloc>* gleader = NULL)
+    {
+        m_node.send_rpc_cast(self(), a_node, atom(a_mod), atom(a_fun), args, gleader);
     }
 
     /// Send exit message to all linked pids and monitoring pids
@@ -276,7 +364,7 @@ public:
     /// The given pid will receive an exit message when \a a_pid dies.
     /// @throws err_no_process
     /// @throws err_connection
-    void link(const epid<Alloc>& a_to) throw (err_no_process, err_connection) {
+    void link(const epid<Alloc>& a_to) {
         if (self() == a_to)
             return;
         if (m_links.find(a_to) != m_links.end())
@@ -293,7 +381,8 @@ public:
     }
 
     /// Set up a monitor of a remote \a a_target_pid.
-    const ref<Alloc>& monitor(const epid<Alloc>& a_target_pid) {
+    //const ref<Alloc>& monitor(const epid<Alloc>& a_target_pid) {
+    void monitor(const epid<Alloc>& a_target_pid) {
         if (self() == a_target_pid)
             return;
         const ref<Alloc>& l_ref = m_node.send_monitor(self(), a_target_pid);
@@ -310,148 +399,20 @@ public:
     }
 };
 
-//------------------------------------------------------------------------------
-// basic_otp_mailbox implementation
-//------------------------------------------------------------------------------
-
-template <typename Alloc, typename Mutex>
-void basic_otp_mailbox<Alloc, Mutex>::
-break_links(const eterm<Alloc>& a_reason)
-{
-    for (typename std::set<epid<Alloc> >::const_iterator
-            it=m_links.begin(), end = m_links.end(); it != end; ++it)
-        try { m_node.send_exit(self(), *it, a_reason); } catch(...) {}
-    for (typename std::map<ref<Alloc>, epid<Alloc> >::const_iterator
-            it = m_monitors.begin(), end = m_monitors.end(); it != end; ++it)
-        try { m_node.send_monitor_exit(self(), it->second, it->first, a_reason); } catch(...) {}
-    if (!m_links.empty())    m_links.clear();
-    if (!m_monitors.empty()) m_monitors.clear();
-}
-
-template <typename Alloc, typename Mutex>
-transport_msg<Alloc>* basic_otp_mailbox<Alloc, Mutex>::
-match(const eterm<Alloc>& a_pattern, varbind* a_binding)
-{
-    for (typename queue_type::iterator it = m_queue.begin(), e = m_queue.end();
-            it != e; ++it)
-    {
-        transport_msg<Alloc>* p = *it;
-        BOOST_ASSERT(p);
-        if (a_pattern.match(p->msg(), a_binding)) {
-            // Found a match
-            m_queue.erase(it);
-            return p;
-        }
-    }
-    return NULL;
-}
-
-template <typename Alloc, typename Mutex>
-void basic_otp_mailbox<Alloc, Mutex>::
-do_on_deadline_timer(receive_handler_type f, boost::system::error_code& ec)
-{
-    m_deadline_timer.expires_at(boost::asio::deadline_timer_ex::time_type());
-
-    f(*this, ec); // In case of timeout ec would contain boost::asio::error::timeout
-}
-
-template <typename Alloc, typename Mutex>
-void basic_otp_mailbox<Alloc, Mutex>::
-async_receive(receive_handler_type h, long msec_timeout) throw (std::runtime_error)
-{
-    m_deadline_timer.cancel();
-
-    // expires_at() == boost::posix_time::not_a_date_time
-    /*
-    if (m_deadline_timer.expires_at() != boost::asio::deadline_timer_ex::time_type())
-        throw eterm_exception(
-            "Another receive() is already scheduled for mailbox", self());
-    */
-
-    if (msec_timeout < 0)
-        m_deadline_timer.async_wait(
-            boost::bind(
-                &basic_otp_mailbox<Alloc,Mutex>::do_on_deadline_timer,
-                this, h, boost::asio::placeholders::error));
-    else
-        m_deadline_timer.async_wait_timeout(
-            boost::bind(
-                &basic_otp_mailbox<Alloc,Mutex>::do_on_deadline_timer,
-                this, h, boost::asio::placeholders::error),
-            msec_timeout);
-}
-
-template <typename Alloc, typename Mutex>
-void basic_otp_mailbox<Alloc, Mutex>::
-do_deliver(transport_msg<Alloc>* a_msg)
-{
-    try {
-        switch (a_msg->type()) {
-            case transport_msg<Alloc>::LINK:
-                BOOST_ASSERT(a_msg->to_pid() == self());
-                m_links.insert(a_msg->from_pid());
-                delete a_msg;
-                return;
-
-            case transport_msg<Alloc>::UNLINK:
-                BOOST_ASSERT(a_msg->to_pid() == self());
-                m_links.erase(a_msg->from_pid());
-                delete a_msg;
-                return;
-
-            case transport_msg<Alloc>::MONITOR_P:
-                BOOST_ASSERT((a_msg->to().type() == PID && a_msg->to_pid() == self())
-                           || a_msg->to().to_atom() == m_name);
-                m_monitors.insert(
-                    std::pair<ref<Alloc>, epid<Alloc> >(a_msg->get_ref(), a_msg->from_pid()));
-                delete a_msg;
-                return;
-
-            case transport_msg<Alloc>::DEMONITOR_P:
-                m_monitors.erase(a_msg->get_ref());
-                delete a_msg;
-                return;
-
-            case transport_msg<Alloc>::MONITOR_P_EXIT:
-                m_monitors.erase(a_msg->get_ref());
-                m_queue.push_back(a_msg);
-                break;
-
-            case transport_msg<Alloc>::EXIT2:
-            case transport_msg<Alloc>::EXIT2_TT:
-                BOOST_ASSERT(a_msg->to_pid() == self());
-                m_links.erase(a_msg->from_pid());
-                m_queue.push_back(a_msg);
-                break;
-
-            default:
-                m_queue.push_back(a_msg);
-        }
-    } catch (std::exception& e) {
-        a_msg->set_error_flag();
-        m_queue.push_back(a_msg);
-    }
-
-    // If the timer's expiration is set to some non-default value, it means that
-    // there's an outstanding asynchronous receive operation.  We cancel the timer
-    // that will cause invocation of the handler passed to the deadline timer
-    // upon executing mailbox->async_receive(Handler, Timeout).
-    if (m_deadline_timer.expires_at() != boost::asio::deadline_timer_ex::time_type())
-        m_deadline_timer.cancel();
-}
-
 } // namespace connect
-} // namespace EIXX_NAMESPACE
+} // namespace eixx
 
 namespace std {
 
     template <typename Alloc, typename Mutex>
     ostream& operator<< (ostream& out,
-        const EIXX_NAMESPACE::connect::basic_otp_mailbox<Alloc,Mutex>& a_mbox)
+        const eixx::connect::basic_otp_mailbox<Alloc,Mutex>& a_mbox)
     {
         return a_mbox.dump(out);
     }
 
 } // namespace std
+
+#include <eixx/connect/basic_otp_mailbox.hxx>
 
 #endif // _EIXX_BASIC_OTP_MAILBOX_HPP_
