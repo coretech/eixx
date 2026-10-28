@@ -884,3 +884,43 @@ BOOST_AUTO_TEST_CASE( test_cast2 )
 }
 
 
+
+// Assigning from a named (non-const) lvalue must copy, never move from it.
+BOOST_AUTO_TEST_CASE( test_assign_lvalue_copies )
+{
+    allocator_t alloc;
+
+    eterm src[4];
+    src[0] = eterm(10);
+    src[1] = atom("abc");
+    src[2] = eterm("a string");
+    src[3] = eterm(tuple({eterm(1), eterm(2)}));
+
+    eterm dst[4];
+    for (int i = 0; i < 4; i++)
+        dst[i] = src[i];
+
+    for (int i = 0; i < 4; i++) {
+        BOOST_CHECK_EQUAL(src[i].type(), dst[i].type());
+        BOOST_CHECK(src[i].type() != UNDEFINED);
+        BOOST_CHECK(src[i] == dst[i]);
+    }
+
+    // Assigning a named wrapper object must not steal its storage either.
+    tuple tup({eterm(1), eterm(2)});
+    list  lst({eterm(1), eterm(2), eterm(3)});
+    eterm   e1, e2;
+    e1 = tup;
+    e2 = lst;
+    BOOST_CHECK_EQUAL(2u, tup.size());
+    BOOST_CHECK_EQUAL(3u, lst.length());
+    BOOST_CHECK_EQUAL(TUPLE, e1.type());
+    BOOST_CHECK_EQUAL(LIST,  e2.type());
+
+    // Genuine rvalues still move.
+    eterm mv;
+    eterm tmp(10);
+    mv = std::move(tmp);
+    BOOST_CHECK_EQUAL(LONG, mv.type());
+    BOOST_CHECK_EQUAL(UNDEFINED, tmp.type());
+}

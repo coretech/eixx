@@ -367,10 +367,20 @@ public:
         return *this;
     }
 
-    template <typename T>
+    /**
+     * Move-assign a value of a type convertible to eterm.  Only true rvalues
+     * are accepted: lvalues (including non-const eterm lvalues) are handled
+     * by the copy overloads above, otherwise assigning from a named object
+     * (e.g. "dst = src") would silently steal its storage and leave "src"
+     * UNDEFINED.
+     */
+    template <typename T,
+              typename = typename std::enable_if<
+                  !std::is_lvalue_reference<T>::value &&
+                  !std::is_same<typename std::decay<T>::type, eterm<Alloc>>::value>::type>
     void operator= (T&& a) {
         if (m_type >= STRING) this->~eterm();
-        new (this) eterm(std::move(a));
+        new (this) eterm(std::forward<T>(a));
     }
 
     /**
